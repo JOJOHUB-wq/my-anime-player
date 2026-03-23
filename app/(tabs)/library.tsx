@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -17,177 +16,193 @@ import {
   View,
 } from 'react-native';
 
+import {
+  createCustomPlaylist,
+  DEFAULT_PLAYLIST_ICON,
+  deletePlaylistById,
+  getPlaylistsWithCounts,
+  importVideoFromDocument,
+  initializeDatabase,
+  parseImportedFilename,
+  renamePlaylist,
+  setPlaylistPinned,
+  updatePlaylistIcon,
+  type PlaylistRow,
+} from '@/src/db/database';
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { LIQUID_COLORS } from '@/src/theme/liquid';
 
-type VideoRow = {
-  id: number;
-  uri: string;
-  title: string;
-  duration: number;
-  currentTime: number;
-};
+type PlaylistMenuMode = 'actions' | 'rename' | null;
 
-const VIDEOS_DIRECTORY = `${FileSystem.documentDirectory ?? ''}videos/`;
+const PLAYLIST_ICON_OPTIONS = [
+  'folder-open-outline',
+  'film-outline',
+  'sparkles-outline',
+  'flame-outline',
+  'skull-outline',
+  'heart-outline',
+  'planet-outline',
+  'rocket-outline',
+  'game-controller-outline',
+] as const;
 
-function stripExtension(filename: string) {
-  return filename.replace(/\.[^.]+$/g, '').trim();
-}
-
-function sanitizeFilename(filename: string) {
-  const normalized = filename
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '');
-
-  if (!normalized) {
-    return `video-${Date.now()}.mp4`;
+function resolvePlaylistIcon(icon?: string): keyof typeof Ionicons.glyphMap {
+  if (icon && Object.prototype.hasOwnProperty.call(Ionicons.glyphMap, icon)) {
+    return icon as keyof typeof Ionicons.glyphMap;
   }
 
-  return normalized;
+  return DEFAULT_PLAYLIST_ICON as keyof typeof Ionicons.glyphMap;
 }
 
-function formatClock(seconds: number) {
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return '00:00';
-  }
-
-  const total = Math.floor(seconds);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const remainingSeconds = total % 60;
-
-  if (hours > 0) {
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
-  }
-
-  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+function formatVideoCount(count: number) {
+  return `${count} відео`;
 }
 
-function progressRatio(video: VideoRow) {
-  if (!video.duration || video.duration <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(video.currentTime / video.duration, 1));
-}
-
-function VideoCard({
+function PlaylistCard({
   item,
-  onPlay,
-  onRename,
+  onPress,
+  onOpenMenu,
 }: {
-  item: VideoRow;
-  onPlay: () => void;
-  onRename: () => void;
+  item: PlaylistRow;
+  onPress: () => void;
+  onOpenMenu: () => void;
 }) {
-  const ratio = progressRatio(item);
-
   return (
-    <Pressable onPress={onPlay}>
-      <GlassCard style={styles.videoCard}>
-        <View style={styles.videoTopRow}>
-          <View style={styles.videoIconWrap}>
-            <Ionicons name="play" size={18} color={LIQUID_COLORS.textPrimary} />
+    <Pressable onPress={onPress} style={styles.playlistShell}>
+      <GlassCard style={styles.playlistCard}>
+        {item.is_pinned ? (
+          <View style={styles.pinBadge}>
+            <Ionicons name="pin" size={12} color={LIQUID_COLORS.textPrimary} />
+          </View>
+        ) : null}
+
+        <View style={styles.playlistTopRow}>
+          <View style={styles.playlistIconWrap}>
+            <Ionicons
+              name={resolvePlaylistIcon(item.icon)}
+              size={24}
+              color={LIQUID_COLORS.accentPurple}
+            />
           </View>
 
           <Pressable
             onPress={(event) => {
               event.stopPropagation();
-              onRename();
+              onOpenMenu();
             }}
-            style={styles.editButton}
-            hitSlop={10}>
-            <Ionicons name="pencil" size={16} color={LIQUID_COLORS.textPrimary} />
+            style={styles.menuButton}
+            hitSlop={8}>
+            <Ionicons name="ellipsis-vertical" size={18} color={LIQUID_COLORS.textPrimary} />
           </Pressable>
         </View>
 
-        <Text style={styles.videoTitle} numberOfLines={2}>
-          {item.title}
-        </Text>
-
-        <Text style={styles.videoMeta}>
-          {formatClock(item.currentTime)} / {formatClock(item.duration)}
-        </Text>
-
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${ratio * 100}%` }]} />
+        <View style={styles.playlistCopy}>
+          <Text style={styles.playlistTitle} numberOfLines={3}>
+            {item.name}
+          </Text>
+          <Text style={styles.playlistMeta}>{formatVideoCount(item.videoCount)}</Text>
         </View>
       </GlassCard>
     </Pressable>
   );
 }
 
+function ActionSheetButton({
+  label,
+  icon,
+  onPress,
+  destructive,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  destructive?: boolean;
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.sheetButton}>
+      <Ionicons
+        name={icon}
+        size={18}
+        color={destructive ? LIQUID_COLORS.danger : LIQUID_COLORS.textPrimary}
+      />
+      <Text style={[styles.sheetButtonLabel, destructive && styles.sheetButtonLabelDanger]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export default function LibraryTabScreen() {
   const db = useSQLiteContext();
-  const [videos, setVideos] = useState<VideoRow[]>([]);
+  const [playlists, setPlaylists] = useState<PlaylistRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [savingTitle, setSavingTitle] = useState(false);
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false);
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [customPlaylistName, setCustomPlaylistName] = useState('');
+  const [customPlaylistIcon, setCustomPlaylistIcon] = useState<string>(DEFAULT_PLAYLIST_ICON);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistRow | null>(null);
+  const [playlistMenuMode, setPlaylistMenuMode] = useState<PlaylistMenuMode>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renameIconDraft, setRenameIconDraft] = useState<string>(DEFAULT_PLAYLIST_ICON);
+  const [pickedAsset, setPickedAsset] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [importModalVisible, setImportModalVisible] = useState(false);
+  const [selectedImportPlaylistId, setSelectedImportPlaylistId] = useState<number | null>(null);
+  const [newImportPlaylistName, setNewImportPlaylistName] = useState('');
+  const [newImportPlaylistIcon, setNewImportPlaylistIcon] = useState<string>(DEFAULT_PLAYLIST_ICON);
+  const [submittingAction, setSubmittingAction] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingVideo, setEditingVideo] = useState<VideoRow | null>(null);
-  const [draftTitle, setDraftTitle] = useState('');
 
-  const totalProgress = useMemo(() => {
-    if (videos.length === 0) {
-      return 0;
-    }
-
-    return videos.reduce((sum, video) => sum + progressRatio(video), 0) / videos.length;
-  }, [videos]);
-
-  const ensureSchema = useCallback(async () => {
-    await db.execAsync(`
-      CREATE TABLE IF NOT EXISTS videos (
-        id INTEGER PRIMARY KEY,
-        uri TEXT NOT NULL,
-        title TEXT NOT NULL,
-        duration REAL NOT NULL DEFAULT 0,
-        currentTime REAL NOT NULL DEFAULT 0
-      );
-    `);
-  }, [db]);
-
-  const loadVideos = useCallback(async () => {
+  const loadPlaylists = useCallback(async () => {
     setError(null);
     setLoading(true);
     setRefreshing(true);
 
     try {
-      await ensureSchema();
-      const rows = await db.getAllAsync<VideoRow>(
-        'SELECT id, uri, title, duration, currentTime FROM videos ORDER BY id DESC'
-      );
-      setVideos(
-        rows.map((row) => ({
-          ...row,
-          duration: Number(row.duration ?? 0),
-          currentTime: Number(row.currentTime ?? 0),
-        }))
-      );
+      await initializeDatabase(db);
+      setPlaylists(await getPlaylistsWithCounts(db));
     } catch {
-      setError('Не вдалося завантажити локальні відео з SQLite.');
-      setVideos([]);
+      setError('Не вдалося завантажити плейлисти з бази даних.');
+      setPlaylists([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [db, ensureSchema]);
+  }, [db]);
 
   useFocusEffect(
     useCallback(() => {
-      void loadVideos();
-    }, [loadVideos])
+      void loadPlaylists();
+    }, [loadPlaylists])
   );
+
+  const closePlaylistModals = useCallback(() => {
+    setSelectedPlaylist(null);
+    setPlaylistMenuMode(null);
+    setRenameDraft('');
+    setRenameIconDraft(DEFAULT_PLAYLIST_ICON);
+  }, []);
+
+  const openPlaylistMenu = useCallback((playlist: PlaylistRow) => {
+    setSelectedPlaylist(playlist);
+    setPlaylistMenuMode('actions');
+    setRenameDraft(playlist.name);
+    setRenameIconDraft(playlist.icon || DEFAULT_PLAYLIST_ICON);
+  }, []);
+
+  const closeImportModal = useCallback(() => {
+    setImportModalVisible(false);
+    setPickedAsset(null);
+    setSelectedImportPlaylistId(null);
+    setNewImportPlaylistName('');
+    setNewImportPlaylistIcon(DEFAULT_PLAYLIST_ICON);
+  }, []);
 
   const handleImport = useCallback(async () => {
     setError(null);
-    setImporting(true);
 
     try {
-      await ensureSchema();
+      await initializeDatabase(db);
 
       const result = await DocumentPicker.getDocumentAsync({
         type: 'video/*',
@@ -199,104 +214,166 @@ export default function LibraryTabScreen() {
         return;
       }
 
-      if (!FileSystem.documentDirectory) {
-        throw new Error('Локальне сховище недоступне.');
-      }
+      const asset = result.assets[0];
+      const parsed = parseImportedFilename(asset.name || '');
+      const matchedPlaylist = playlists.find(
+        (playlist) => playlist.name.trim().toLowerCase() === parsed.seriesTitle.trim().toLowerCase()
+      );
 
-      await FileSystem.makeDirectoryAsync(VIDEOS_DIRECTORY, { intermediates: true });
-
-      const pickedAsset = result.assets[0];
-      const safeFilename = sanitizeFilename(pickedAsset.name || `video-${Date.now()}.mp4`);
-      const targetUri = `${VIDEOS_DIRECTORY}${Date.now()}-${safeFilename}`;
-
-      await FileSystem.copyAsync({
-        from: pickedAsset.uri,
-        to: targetUri,
-      });
-
-      await db.withTransactionAsync(async () => {
-        await db.runAsync(
-          'INSERT INTO videos (uri, title, duration, currentTime) VALUES (?, ?, ?, ?)',
-          targetUri,
-          stripExtension(pickedAsset.name || safeFilename),
-          0,
-          0
-        );
-      });
-
-      await loadVideos();
+      setPickedAsset(asset);
+      setSelectedImportPlaylistId(matchedPlaylist?.id ?? null);
+      setNewImportPlaylistName(parsed.seriesTitle);
+      setNewImportPlaylistIcon(matchedPlaylist?.icon || DEFAULT_PLAYLIST_ICON);
+      setImportModalVisible(true);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : 'Не вдалося імпортувати файл.');
+    }
+  }, [db, playlists]);
+
+  const handleConfirmImport = useCallback(async () => {
+    if (!pickedAsset) {
+      return;
+    }
+
+    setError(null);
+    setImporting(true);
+
+    try {
+      await initializeDatabase(db);
+      await importVideoFromDocument(db, pickedAsset, {
+        playlistId: selectedImportPlaylistId,
+        playlistName: selectedImportPlaylistId ? null : newImportPlaylistName,
+        playlistIcon: selectedImportPlaylistId ? null : newImportPlaylistIcon,
+      });
+      closeImportModal();
+      await loadPlaylists();
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : 'Не вдалося додати відео до плейлиста.');
     } finally {
       setImporting(false);
     }
-  }, [db, ensureSchema, loadVideos]);
+  }, [
+    closeImportModal,
+    db,
+    loadPlaylists,
+    newImportPlaylistIcon,
+    newImportPlaylistName,
+    pickedAsset,
+    selectedImportPlaylistId,
+  ]);
 
-  const openRenameModal = useCallback((video: VideoRow) => {
-    setEditingVideo(video);
-    setDraftTitle(video.title);
-  }, []);
-
-  const closeRenameModal = useCallback(() => {
-    setEditingVideo(null);
-    setDraftTitle('');
-  }, []);
-
-  const saveTitle = useCallback(async () => {
-    if (!editingVideo) {
+  const handleCreatePlaylist = useCallback(async () => {
+    const trimmedName = customPlaylistName.trim();
+    if (!trimmedName) {
+      setError('Введіть назву нового плейлиста.');
       return;
     }
 
-    const nextTitle = draftTitle.trim();
-    if (!nextTitle) {
-      setError('Назва не може бути порожньою.');
-      return;
-    }
-
-    setSavingTitle(true);
+    setCreatingPlaylist(true);
     setError(null);
 
     try {
-      await db.withTransactionAsync(async () => {
-        await db.runAsync(
-          'UPDATE videos SET title = ? WHERE id = ?',
-          nextTitle,
-          editingVideo.id
-        );
-      });
-
-      setVideos((current) =>
-        current.map((item) =>
-          item.id === editingVideo.id
-            ? {
-                ...item,
-                title: nextTitle,
-              }
-            : item
-        )
-      );
-      closeRenameModal();
-    } catch {
-      setError('Не вдалося зберегти нову назву.');
+      await createCustomPlaylist(db, trimmedName, customPlaylistIcon);
+      setCreateModalVisible(false);
+      setCustomPlaylistName('');
+      setCustomPlaylistIcon(DEFAULT_PLAYLIST_ICON);
+      await loadPlaylists();
+    } catch (createError) {
+      const message =
+        createError instanceof Error && createError.message.includes('UNIQUE')
+          ? 'Плейлист із такою назвою вже існує.'
+          : createError instanceof Error
+            ? createError.message
+            : 'Не вдалося створити плейлист.';
+      setError(message);
     } finally {
-      setSavingTitle(false);
+      setCreatingPlaylist(false);
     }
-  }, [closeRenameModal, db, draftTitle, editingVideo]);
+  }, [customPlaylistIcon, customPlaylistName, db, loadPlaylists]);
 
-  const renderItem = ({ item }: ListRenderItemInfo<VideoRow>) => (
-    <VideoCard
+  const handleTogglePin = useCallback(async () => {
+    if (!selectedPlaylist) {
+      return;
+    }
+
+    setSubmittingAction(true);
+    setError(null);
+
+    try {
+      await setPlaylistPinned(db, selectedPlaylist.id, selectedPlaylist.is_pinned === 0);
+      closePlaylistModals();
+      await loadPlaylists();
+    } catch {
+      setError('Не вдалося змінити статус закріплення плейлиста.');
+    } finally {
+      setSubmittingAction(false);
+    }
+  }, [closePlaylistModals, db, loadPlaylists, selectedPlaylist]);
+
+  const handleRename = useCallback(async () => {
+    if (!selectedPlaylist) {
+      return;
+    }
+
+    const trimmedName = renameDraft.trim();
+    if (!trimmedName) {
+      setError('Назва плейлиста не може бути порожньою.');
+      return;
+    }
+
+    setSubmittingAction(true);
+    setError(null);
+
+    try {
+      await renamePlaylist(db, selectedPlaylist.id, trimmedName);
+      await updatePlaylistIcon(db, selectedPlaylist.id, renameIconDraft);
+      closePlaylistModals();
+      await loadPlaylists();
+    } catch (renameError) {
+      const message =
+        renameError instanceof Error && renameError.message.includes('UNIQUE')
+          ? 'Плейлист із такою назвою вже існує.'
+          : renameError instanceof Error
+            ? renameError.message
+            : 'Не вдалося перейменувати плейлист.';
+      setError(message);
+    } finally {
+      setSubmittingAction(false);
+    }
+  }, [closePlaylistModals, db, loadPlaylists, renameDraft, renameIconDraft, selectedPlaylist]);
+
+  const handleDelete = useCallback(async () => {
+    if (!selectedPlaylist) {
+      return;
+    }
+
+    setSubmittingAction(true);
+    setError(null);
+
+    try {
+      await deletePlaylistById(db, selectedPlaylist.id);
+      closePlaylistModals();
+      await loadPlaylists();
+    } catch {
+      setError('Не вдалося видалити плейлист і його файли.');
+    } finally {
+      setSubmittingAction(false);
+    }
+  }, [closePlaylistModals, db, loadPlaylists, selectedPlaylist]);
+
+  const renderPlaylist = ({ item }: ListRenderItemInfo<PlaylistRow>) => (
+    <PlaylistCard
       item={item}
-      onPlay={() => {
+      onPress={() => {
         router.push({
-          pathname: '/player/[source]/[id]',
+          pathname: '/folder/[folderKey]',
           params: {
-            source: 'library',
-            id: String(item.id),
+            folderKey: String(item.id),
           },
         });
       }}
-      onRename={() => {
-        openRenameModal(item);
+      onOpenMenu={() => {
+        openPlaylistMenu(item);
       }}
     />
   );
@@ -305,16 +382,16 @@ export default function LibraryTabScreen() {
     <LiquidBackground>
       <View style={styles.header}>
         <View>
-          <Text style={styles.eyebrow}>SQLite медіатека</Text>
+          <Text style={styles.eyebrow}>Авто-сортування</Text>
           <Text style={styles.title}>Бібліотека</Text>
           <Text style={styles.subtitle}>
-            Імпортуйте відео з Files, перейменовуйте їх і продовжуйте перегляд із збереженим прогресом.
+            Плейлисти будуються автоматично з назв файлів, а користувацькі плейлисти можна створювати вручну.
           </Text>
         </View>
 
         <Pressable
           onPress={() => {
-            void loadVideos();
+            void loadPlaylists();
           }}
           style={styles.headerButton}>
           {refreshing ? (
@@ -325,35 +402,32 @@ export default function LibraryTabScreen() {
         </Pressable>
       </View>
 
-      <GlassCard style={styles.importCard}>
-        <View style={styles.importCopy}>
-          <Text style={styles.importTitle}>Імпортувати файл</Text>
-          <Text style={styles.importSubtitle}>
-            Файл буде скопійований у `documentDirectory` і доданий у таблицю `videos`.
-          </Text>
-        </View>
-
+      <View style={styles.actionsRow}>
         <Pressable
           disabled={importing}
           onPress={() => {
             void handleImport();
           }}
-          style={[styles.importButton, importing && styles.importButtonDisabled]}>
+          style={[styles.primaryAction, importing && styles.actionDisabled]}>
           {importing ? (
             <ActivityIndicator size="small" color={LIQUID_COLORS.textPrimary} />
           ) : (
             <>
-              <Ionicons name="cloud-upload-outline" size={20} color={LIQUID_COLORS.textPrimary} />
-              <Text style={styles.importButtonLabel}>Імпортувати файл</Text>
+              <Ionicons name="cloud-upload-outline" size={18} color={LIQUID_COLORS.textPrimary} />
+              <Text style={styles.primaryActionLabel}>Імпортувати відео</Text>
             </>
           )}
         </Pressable>
 
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>{videos.length} відео</Text>
-          <Text style={styles.summaryLabel}>Прогрес {Math.round(totalProgress * 100)}%</Text>
-        </View>
-      </GlassCard>
+        <Pressable
+          onPress={() => {
+            setCreateModalVisible(true);
+          }}
+          style={styles.secondaryAction}>
+          <Ionicons name="add-circle-outline" size={18} color={LIQUID_COLORS.textPrimary} />
+          <Text style={styles.secondaryActionLabel}>Створити власний плейлист</Text>
+        </Pressable>
+      </View>
 
       {error ? (
         <GlassCard style={styles.messageCard}>
@@ -364,25 +438,26 @@ export default function LibraryTabScreen() {
       {loading ? (
         <View style={styles.centerState}>
           <ActivityIndicator size="large" color={LIQUID_COLORS.textPrimary} />
-          <Text style={styles.stateTitle}>Читаю базу відео</Text>
+          <Text style={styles.stateTitle}>Завантажую плейлисти</Text>
         </View>
       ) : (
         <FlatList
-          data={videos}
-          renderItem={renderItem}
+          data={playlists}
+          renderItem={renderPlaylist}
           keyExtractor={(item) => String(item.id)}
+          numColumns={2}
+          columnWrapperStyle={styles.playlistRow}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          initialNumToRender={10}
-          maxToRenderPerBatch={10}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
           windowSize={8}
           removeClippedSubviews
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
           ListEmptyComponent={
             <GlassCard style={styles.messageCard}>
-              <Text style={styles.emptyTitle}>Бібліотека порожня</Text>
+              <Text style={styles.emptyTitle}>Плейлистів ще немає</Text>
               <Text style={styles.emptyCopy}>
-                Натисніть кнопку імпорту вище й додайте перше локальне відео.
+                Імпортуйте відео або створіть власний плейлист вручну.
               </Text>
             </GlassCard>
           }
@@ -392,35 +467,278 @@ export default function LibraryTabScreen() {
       <Modal
         animationType="fade"
         transparent
-        visible={Boolean(editingVideo)}
-        onRequestClose={closeRenameModal}>
+        visible={createModalVisible}
+        onRequestClose={() => {
+          setCreateModalVisible(false);
+        }}>
         <View style={styles.modalBackdrop}>
           <GlassCard style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Редагувати назву</Text>
+            <Text style={styles.modalTitle}>Новий плейлист</Text>
             <TextInput
-              value={draftTitle}
-              onChangeText={setDraftTitle}
+              value={customPlaylistName}
+              onChangeText={setCustomPlaylistName}
+              placeholder="Назва плейлиста"
+              placeholderTextColor={LIQUID_COLORS.textMuted}
+              style={styles.modalInput}
+              autoFocus
+            />
+
+            <View style={styles.iconPickerWrap}>
+              <Text style={styles.iconPickerLabel}>Іконка серії</Text>
+              <View style={styles.iconGrid}>
+                {PLAYLIST_ICON_OPTIONS.map((icon) => (
+                  <Pressable
+                    key={icon}
+                    onPress={() => {
+                      setCustomPlaylistIcon(icon);
+                    }}
+                    style={[
+                      styles.iconOption,
+                      customPlaylistIcon === icon && styles.iconOptionActive,
+                    ]}>
+                    <Ionicons
+                      name={icon}
+                      size={18}
+                      color={LIQUID_COLORS.textPrimary}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => {
+                  setCreateModalVisible(false);
+                  setCustomPlaylistName('');
+                  setCustomPlaylistIcon(DEFAULT_PLAYLIST_ICON);
+                }}
+                style={styles.modalButton}>
+                <Text style={styles.modalButtonLabel}>Скасувати</Text>
+              </Pressable>
+
+              <Pressable
+                disabled={creatingPlaylist}
+                onPress={() => {
+                  void handleCreatePlaylist();
+                }}
+                style={[styles.modalButton, styles.modalButtonPrimary]}>
+                {creatingPlaylist ? (
+                  <ActivityIndicator size="small" color={LIQUID_COLORS.textPrimary} />
+                ) : (
+                  <Text style={styles.modalButtonLabel}>Створити</Text>
+                )}
+              </Pressable>
+            </View>
+          </GlassCard>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={playlistMenuMode === 'actions' && Boolean(selectedPlaylist)}
+        onRequestClose={closePlaylistModals}>
+        <View style={styles.modalBackdrop}>
+          <GlassCard style={styles.sheetCard}>
+            <Text style={styles.sheetTitle}>{selectedPlaylist?.name}</Text>
+
+            <ActionSheetButton
+              label={selectedPlaylist?.is_pinned ? 'Відкріпити' : 'Закріпити'}
+              icon="pin-outline"
+              onPress={() => {
+                void handleTogglePin();
+              }}
+            />
+
+            <ActionSheetButton
+              label="Перейменувати"
+              icon="create-outline"
+              onPress={() => {
+                setPlaylistMenuMode('rename');
+              }}
+            />
+
+            <ActionSheetButton
+              label="Видалити"
+              icon="trash-outline"
+              destructive
+              onPress={() => {
+                void handleDelete();
+              }}
+            />
+
+            <Pressable onPress={closePlaylistModals} style={styles.sheetCancelButton}>
+              <Text style={styles.sheetCancelLabel}>Закрити</Text>
+            </Pressable>
+
+            {submittingAction ? (
+              <View style={styles.sheetLoadingRow}>
+                <ActivityIndicator size="small" color={LIQUID_COLORS.textPrimary} />
+              </View>
+            ) : null}
+          </GlassCard>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={playlistMenuMode === 'rename' && Boolean(selectedPlaylist)}
+        onRequestClose={closePlaylistModals}>
+        <View style={styles.modalBackdrop}>
+          <GlassCard style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Перейменувати плейлист</Text>
+            <TextInput
+              value={renameDraft}
+              onChangeText={setRenameDraft}
               placeholder="Нова назва"
               placeholderTextColor={LIQUID_COLORS.textMuted}
               style={styles.modalInput}
               autoFocus
             />
 
+            <View style={styles.iconPickerWrap}>
+              <Text style={styles.iconPickerLabel}>Іконка серії</Text>
+              <View style={styles.iconGrid}>
+                {PLAYLIST_ICON_OPTIONS.map((icon) => (
+                  <Pressable
+                    key={icon}
+                    onPress={() => {
+                      setRenameIconDraft(icon);
+                    }}
+                    style={[
+                      styles.iconOption,
+                      renameIconDraft === icon && styles.iconOptionActive,
+                    ]}>
+                    <Ionicons
+                      name={icon}
+                      size={18}
+                      color={LIQUID_COLORS.textPrimary}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
             <View style={styles.modalActions}>
-              <Pressable onPress={closeRenameModal} style={styles.modalButton}>
+              <Pressable onPress={closePlaylistModals} style={styles.modalButton}>
                 <Text style={styles.modalButtonLabel}>Скасувати</Text>
               </Pressable>
 
               <Pressable
-                disabled={savingTitle}
+                disabled={submittingAction}
                 onPress={() => {
-                  void saveTitle();
+                  void handleRename();
                 }}
                 style={[styles.modalButton, styles.modalButtonPrimary]}>
-                {savingTitle ? (
+                {submittingAction ? (
                   <ActivityIndicator size="small" color={LIQUID_COLORS.textPrimary} />
                 ) : (
                   <Text style={styles.modalButtonLabel}>Зберегти</Text>
+                )}
+              </Pressable>
+            </View>
+          </GlassCard>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={importModalVisible && Boolean(pickedAsset)}
+        onRequestClose={closeImportModal}>
+        <View style={styles.modalBackdrop}>
+          <GlassCard style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Куди додати відео</Text>
+            <Text style={styles.modalCopy} numberOfLines={2}>
+              {pickedAsset?.name ?? 'Обраний файл'}
+            </Text>
+
+            <Text style={styles.sectionLabel}>Існуючі плейлисти</Text>
+            {playlists.length === 0 ? (
+              <Text style={styles.modalCopy}>Поки що немає жодного плейлиста. Створимо новий нижче.</Text>
+            ) : (
+              <View style={styles.optionList}>
+                {playlists.map((playlist) => (
+                  <Pressable
+                    key={playlist.id}
+                    onPress={() => {
+                      setSelectedImportPlaylistId(playlist.id);
+                    }}
+                    style={[
+                      styles.playlistChoice,
+                      selectedImportPlaylistId === playlist.id && styles.playlistChoiceActive,
+                    ]}>
+                    <View style={styles.playlistChoiceCopy}>
+                      <Ionicons
+                        name={resolvePlaylistIcon(playlist.icon)}
+                        size={18}
+                        color={LIQUID_COLORS.textPrimary}
+                      />
+                      <Text style={styles.playlistChoiceLabel}>{playlist.name}</Text>
+                    </View>
+                    {selectedImportPlaylistId === playlist.id ? (
+                      <Ionicons name="checkmark-circle" size={18} color={LIQUID_COLORS.accentBlue} />
+                    ) : null}
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            <Text style={styles.sectionLabel}>Або створити новий</Text>
+            <TextInput
+              value={newImportPlaylistName}
+              onChangeText={(value) => {
+                setSelectedImportPlaylistId(null);
+                setNewImportPlaylistName(value);
+              }}
+              placeholder="Назва нового плейлиста"
+              placeholderTextColor={LIQUID_COLORS.textMuted}
+              style={styles.modalInput}
+            />
+
+            <View style={styles.iconPickerWrap}>
+              <Text style={styles.iconPickerLabel}>Іконка серії</Text>
+              <View style={styles.iconGrid}>
+                {PLAYLIST_ICON_OPTIONS.map((icon) => (
+                  <Pressable
+                    key={icon}
+                    onPress={() => {
+                      setSelectedImportPlaylistId(null);
+                      setNewImportPlaylistIcon(icon);
+                    }}
+                    style={[
+                      styles.iconOption,
+                      newImportPlaylistIcon === icon &&
+                        selectedImportPlaylistId === null &&
+                        styles.iconOptionActive,
+                    ]}>
+                    <Ionicons
+                      name={icon}
+                      size={18}
+                      color={LIQUID_COLORS.textPrimary}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable onPress={closeImportModal} style={styles.modalButton}>
+                <Text style={styles.modalButtonLabel}>Скасувати</Text>
+              </Pressable>
+
+              <Pressable
+                disabled={importing || (!selectedImportPlaylistId && !newImportPlaylistName.trim())}
+                onPress={() => {
+                  void handleConfirmImport();
+                }}
+                style={[styles.modalButton, styles.modalButtonPrimary]}>
+                {importing ? (
+                  <ActivityIndicator size="small" color={LIQUID_COLORS.textPrimary} />
+                ) : (
+                  <Text style={styles.modalButtonLabel}>Додати</Text>
                 )}
               </Pressable>
             </View>
@@ -471,26 +789,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: LIQUID_COLORS.softBorder,
   },
-  importCard: {
-    marginHorizontal: 20,
+  actionsRow: {
+    paddingHorizontal: 20,
+    gap: 12,
     marginBottom: 16,
-    padding: 18,
-    gap: 16,
   },
-  importCopy: {
-    gap: 6,
-  },
-  importTitle: {
-    color: LIQUID_COLORS.textPrimary,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  importSubtitle: {
-    color: LIQUID_COLORS.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  importButton: {
+  primaryAction: {
     minHeight: 56,
     borderRadius: 18,
     backgroundColor: LIQUID_COLORS.button,
@@ -501,22 +805,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
-  importButtonDisabled: {
-    opacity: 0.7,
-  },
-  importButtonLabel: {
+  primaryActionLabel: {
     color: LIQUID_COLORS.textPrimary,
     fontSize: 15,
     fontWeight: '800',
   },
-  summaryRow: {
+  secondaryAction: {
+    minHeight: 52,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: LIQUID_COLORS.softBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 10,
   },
-  summaryLabel: {
-    color: LIQUID_COLORS.textMuted,
-    fontSize: 13,
+  secondaryActionLabel: {
+    color: LIQUID_COLORS.textPrimary,
+    fontSize: 14,
     fontWeight: '700',
+  },
+  actionDisabled: {
+    opacity: 0.72,
   },
   messageCard: {
     marginHorizontal: 20,
@@ -544,27 +855,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 120,
   },
-  separator: {
-    height: 12,
+  playlistRow: {
+    gap: 14,
+    marginBottom: 14,
   },
-  videoCard: {
+  playlistShell: {
+    flex: 1,
+  },
+  playlistCard: {
+    minHeight: 188,
     padding: 16,
-    gap: 12,
+    justifyContent: 'space-between',
   },
-  videoTopRow: {
+  pinBadge: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  playlistTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  videoIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
+  playlistIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  editButton: {
+  menuButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -572,27 +899,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  videoTitle: {
-    color: LIQUID_COLORS.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 22,
+  playlistCopy: {
+    gap: 8,
   },
-  videoMeta: {
+  playlistTitle: {
+    color: LIQUID_COLORS.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+    lineHeight: 24,
+  },
+  playlistMeta: {
     color: LIQUID_COLORS.textSecondary,
     fontSize: 13,
-    fontWeight: '600',
-  },
-  progressTrack: {
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: LIQUID_COLORS.accentBlue,
+    fontWeight: '700',
   },
   emptyTitle: {
     color: LIQUID_COLORS.textPrimary,
@@ -607,7 +926,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(2,6,23,0.64)',
+    backgroundColor: 'rgba(2,6,23,0.66)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
@@ -623,6 +942,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
   },
+  modalCopy: {
+    color: LIQUID_COLORS.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+  },
   modalInput: {
     minHeight: 52,
     borderRadius: 16,
@@ -633,6 +957,73 @@ const styles = StyleSheet.create({
     color: LIQUID_COLORS.textPrimary,
     fontSize: 15,
     fontWeight: '600',
+  },
+  sectionLabel: {
+    color: LIQUID_COLORS.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  optionList: {
+    gap: 10,
+  },
+  playlistChoice: {
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: LIQUID_COLORS.softBorder,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  playlistChoiceActive: {
+    borderColor: LIQUID_COLORS.accentBlue,
+    backgroundColor: 'rgba(103,232,249,0.08)',
+  },
+  playlistChoiceCopy: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  playlistChoiceLabel: {
+    color: LIQUID_COLORS.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+  },
+  iconPickerWrap: {
+    gap: 10,
+  },
+  iconPickerLabel: {
+    color: LIQUID_COLORS.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  iconGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  iconOption: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: LIQUID_COLORS.softBorder,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconOptionActive: {
+    borderColor: LIQUID_COLORS.accentBlue,
+    backgroundColor: 'rgba(103,232,249,0.12)',
   },
   modalActions: {
     flexDirection: 'row',
@@ -657,5 +1048,55 @@ const styles = StyleSheet.create({
     color: LIQUID_COLORS.textPrimary,
     fontSize: 14,
     fontWeight: '800',
+  },
+  sheetCard: {
+    width: '100%',
+    maxWidth: 420,
+    padding: 20,
+    gap: 10,
+  },
+  sheetTitle: {
+    color: LIQUID_COLORS.textPrimary,
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  sheetButton: {
+    minHeight: 48,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: LIQUID_COLORS.softBorder,
+  },
+  sheetButtonLabel: {
+    color: LIQUID_COLORS.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  sheetButtonLabelDanger: {
+    color: LIQUID_COLORS.danger,
+  },
+  sheetCancelButton: {
+    marginTop: 4,
+    minHeight: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: LIQUID_COLORS.button,
+    borderWidth: 1,
+    borderColor: LIQUID_COLORS.softBorder,
+  },
+  sheetCancelLabel: {
+    color: LIQUID_COLORS.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  sheetLoadingRow: {
+    alignItems: 'center',
+    paddingTop: 4,
   },
 });

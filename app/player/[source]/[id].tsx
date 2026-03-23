@@ -1,30 +1,37 @@
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  GestureResponderEvent,
+  LayoutChangeEvent,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 
+import {
+  getVideoById,
+  initializeDatabase,
+  updateVideoProgress,
+  type VideoRow,
+} from '@/src/db/database';
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { LIQUID_COLORS } from '@/src/theme/liquid';
-
-type VideoRow = {
-  id: number;
-  uri: string;
-  title: string;
-  duration: number;
-  currentTime: number;
-};
 
 type PlayerSnapshot = {
   currentTime: number;
   duration: number;
   playing: boolean;
 };
-
-const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2];
 
 function formatClock(seconds: number) {
   if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -41,23 +48,6 @@ function formatClock(seconds: number) {
   }
 
   return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
-}
-
-function OverlayButton({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable onPress={onPress} style={styles.overlayButton}>
-      <Ionicons name={icon} size={18} color={LIQUID_COLORS.textPrimary} />
-      <Text style={styles.overlayButtonLabel}>{label}</Text>
-    </Pressable>
-  );
 }
 
 function readSnapshot(player: VideoPlayer): PlayerSnapshot | null {
@@ -80,29 +70,26 @@ function FullscreenPlayer({
   onClose: () => Promise<void>;
 }) {
   const db = useSQLiteContext();
-  const [position, setPosition] = useState(video.currentTime);
+  const [position, setPosition] = useState(video.progress);
   const [duration, setDuration] = useState(video.duration);
-  const [speedIndex, setSpeedIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
+  const [isLocked, setIsLocked] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const [interactionTick, setInteractionTick] = useState(0);
   const lastPersistAtRef = useRef(0);
+  const hideControlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controlsOpacity = useRef(new Animated.Value(1)).current;
+  const progressTrackWidthRef = useRef(1);
 
   const player = useVideoPlayer({ uri: video.uri }, (videoPlayer) => {
     videoPlayer.staysActiveInBackground = true;
-    videoPlayer.currentTime = video.currentTime;
-    videoPlayer.playbackRate = PLAYBACK_SPEEDS[0];
+    videoPlayer.currentTime = video.progress;
     videoPlayer.play();
   });
 
   const persistSnapshot = useCallback(
     async (snapshot: PlayerSnapshot) => {
-      await db.withTransactionAsync(async () => {
-        await db.runAsync(
-          'UPDATE videos SET currentTime = ?, duration = ? WHERE id = ?',
-          snapshot.currentTime,
-          snapshot.duration,
-          video.id
-        );
-      });
+      await updateVideoProgress(db, video.id, snapshot.currentTime, snapshot.duration);
     },
     [db, video.id]
   );
@@ -129,7 +116,48 @@ function FullscreenPlayer({
     };
   }, [persistSnapshot, player]);
 
+  useEffect(() => {
+    Animated.timing(controlsOpacity, {
+      toValue: showControls && !isLocked ? 1 : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [controlsOpacity, isLocked, showControls]);
+
+  useEffect(() => {
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current);
+      hideControlsTimeoutRef.current = null;
+    }
+
+    if (!showControls || isLocked) {
+      return;
+    }
+
+    hideControlsTimeoutRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 5000);
+
+    return () => {
+      if (hideControlsTimeoutRef.current) {
+        clearTimeout(hideControlsTimeoutRef.current);
+        hideControlsTimeoutRef.current = null;
+      }
+    };
+  }, [interactionTick, isLocked, showControls]);
+
+  const keepControlsAlive = useCallback(() => {
+    if (isLocked) {
+      return;
+    }
+
+    setShowControls(true);
+    setInteractionTick((current) => current + 1);
+  }, [isLocked]);
+
   const togglePlayback = useCallback(() => {
+    keepControlsAlive();
+
     if (isPlaying) {
       player.pause();
       setIsPlaying(false);
@@ -138,30 +166,7 @@ function FullscreenPlayer({
 
     player.play();
     setIsPlaying(true);
-  }, [isPlaying, player]);
-
-  const handleSpeedCycle = useCallback(() => {
-    setSpeedIndex((current) => {
-      const nextIndex = (current + 1) % PLAYBACK_SPEEDS.length;
-      player.playbackRate = PLAYBACK_SPEEDS[nextIndex];
-      return nextIndex;
-    });
-  }, [player]);
-
-  const handleSeek = useCallback(
-    (seconds: number) => {
-      player.seekBy(seconds);
-
-      const snapshot = readSnapshot(player);
-      if (!snapshot) {
-        return;
-      }
-
-      setPosition(snapshot.currentTime);
-      setDuration(snapshot.duration);
-    },
-    [player]
-  );
+  }, [isPlaying, keepControlsAlive, player]);
 
   const handleClose = useCallback(async () => {
     const snapshot = readSnapshot(player);
@@ -171,57 +176,132 @@ function FullscreenPlayer({
     await onClose();
   }, [onClose, persistSnapshot, player]);
 
+  const handleSurfacePress = useCallback(() => {
+    if (isLocked) {
+      return;
+    }
+
+    if (showControls) {
+      setShowControls(false);
+      return;
+    }
+
+    setShowControls(true);
+    setInteractionTick((current) => current + 1);
+  }, [isLocked, showControls]);
+
+  const handleLock = useCallback((event?: GestureResponderEvent) => {
+    event?.stopPropagation();
+    setIsLocked(true);
+    setShowControls(false);
+  }, []);
+
+  const handleUnlock = useCallback(() => {
+    setIsLocked(false);
+    setShowControls(true);
+    setInteractionTick((current) => current + 1);
+  }, []);
+
+  const seekToRatio = useCallback(
+    (nextRatio: number) => {
+      if (!duration || duration <= 0) {
+        return;
+      }
+
+      keepControlsAlive();
+      const safeRatio = Math.max(0, Math.min(nextRatio, 1));
+      const nextTime = duration * safeRatio;
+      player.currentTime = nextTime;
+      setPosition(nextTime);
+    },
+    [duration, keepControlsAlive, player]
+  );
+
+  const handleProgressTrackLayout = useCallback((event: LayoutChangeEvent) => {
+    progressTrackWidthRef.current = Math.max(event.nativeEvent.layout.width, 1);
+  }, []);
+
+  const handleProgressTrackPress = useCallback(
+    (event: GestureResponderEvent) => {
+      const ratio = event.nativeEvent.locationX / progressTrackWidthRef.current;
+      seekToRatio(ratio);
+    },
+    [seekToRatio]
+  );
+
+  const progressRatio = duration > 0 ? Math.max(0, Math.min(position / duration, 1)) : 0;
+
   return (
     <View style={styles.playerRoot}>
       <VideoView style={styles.playerVideo} player={player} nativeControls={false} contentFit="contain" />
 
-      <SafeAreaView style={styles.playerOverlay} pointerEvents="box-none">
-        <Pressable
-          onPress={() => {
-            void handleClose();
-          }}
-          style={styles.closeButton}>
-          <Ionicons name="close" size={20} color={LIQUID_COLORS.textPrimary} />
-        </Pressable>
+      {!isLocked ? <Pressable style={styles.tapSurface} onPress={handleSurfacePress} /> : null}
 
-        <View style={styles.bottomOverlay}>
-          <GlassCard style={styles.playerInfoCard}>
-            <Text style={styles.playerTitle} numberOfLines={1}>
-              {video.title}
-            </Text>
-            <Text style={styles.playerMeta}>
-              {formatClock(position)} / {formatClock(duration)}
-            </Text>
-          </GlassCard>
+      {isLocked ? (
+        <SafeAreaView style={styles.lockedOverlay} pointerEvents="box-none">
+          <Pressable onPress={handleUnlock} style={styles.unlockButton}>
+            <Ionicons name="lock-open-outline" size={20} color={LIQUID_COLORS.textPrimary} />
+          </Pressable>
+        </SafeAreaView>
+      ) : (
+        <SafeAreaView style={styles.playerOverlay} pointerEvents="box-none">
+          <Animated.View
+            pointerEvents={showControls ? 'box-none' : 'none'}
+            style={[styles.topBar, { opacity: controlsOpacity }]}>
+            <Pressable
+              onPress={(event) => {
+                event.stopPropagation();
+                keepControlsAlive();
+                void handleClose();
+              }}
+              style={styles.closeButton}>
+              <Ionicons name="chevron-back" size={20} color={LIQUID_COLORS.textPrimary} />
+            </Pressable>
+          </Animated.View>
 
-          <View style={styles.controlsRow}>
-            <OverlayButton
-              icon="play-back"
-              label="-15с"
-              onPress={() => {
-                handleSeek(-15);
-              }}
-            />
-            <OverlayButton
-              icon={isPlaying ? 'pause' : 'play'}
-              label={isPlaying ? 'Пауза' : 'Пуск'}
-              onPress={togglePlayback}
-            />
-            <OverlayButton
-              icon="speedometer-outline"
-              label={`${PLAYBACK_SPEEDS[speedIndex].toFixed(2).replace(/\.00$/, '')}x`}
-              onPress={handleSpeedCycle}
-            />
-            <OverlayButton
-              icon="play-forward"
-              label="+15с"
-              onPress={() => {
-                handleSeek(15);
-              }}
-            />
-          </View>
-        </View>
-      </SafeAreaView>
+          <Animated.View
+            pointerEvents={showControls ? 'box-none' : 'none'}
+            style={[styles.bottomOverlay, { opacity: controlsOpacity }]}>
+            <BlurView intensity={40} tint="dark" style={styles.bottomBar}>
+              <Pressable
+                onPress={(event) => {
+                  event.stopPropagation();
+                  togglePlayback();
+                }}
+                style={styles.bottomIconButton}>
+                <Ionicons
+                  name={isPlaying ? 'pause' : 'play'}
+                  size={20}
+                  color={LIQUID_COLORS.textPrimary}
+                />
+              </Pressable>
+
+              <Text style={styles.timeText}>{formatClock(position)}</Text>
+
+              <View style={styles.progressWrap}>
+                <View
+                  onLayout={handleProgressTrackLayout}
+                  onStartShouldSetResponder={() => true}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderGrant={handleProgressTrackPress}
+                  onResponderMove={handleProgressTrackPress}
+                  style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${progressRatio * 100}%` }]} />
+                  <View style={[styles.progressThumb, { left: `${progressRatio * 100}%` }]} />
+                </View>
+              </View>
+
+              <Text style={styles.timeText}>{formatClock(duration)}</Text>
+
+              <Pressable
+                onPress={handleLock}
+                style={styles.bottomIconButton}>
+                <Ionicons name="lock-closed" size={18} color={LIQUID_COLORS.textPrimary} />
+              </Pressable>
+            </BlurView>
+          </Animated.View>
+        </SafeAreaView>
+      )}
     </View>
   );
 }
@@ -245,37 +325,21 @@ export default function PlayerScreen() {
       setError(null);
 
       try {
-        await db.execAsync(`
-          CREATE TABLE IF NOT EXISTS videos (
-            id INTEGER PRIMARY KEY,
-            uri TEXT NOT NULL,
-            title TEXT NOT NULL,
-            duration REAL NOT NULL DEFAULT 0,
-            currentTime REAL NOT NULL DEFAULT 0
-          );
-        `);
-
         if (!canLoad) {
           throw new Error('Некоректний ідентифікатор відео.');
         }
 
+        await initializeDatabase(db);
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
 
-        const row = await db.getFirstAsync<VideoRow>(
-          'SELECT id, uri, title, duration, currentTime FROM videos WHERE id = ?',
-          videoId
-        );
+        const row = await getVideoById(db, videoId);
 
         if (!row) {
           throw new Error('Відео не знайдено у базі даних.');
         }
 
         if (active) {
-          setVideo({
-            ...row,
-            duration: Number(row.duration ?? 0),
-            currentTime: Number(row.currentTime ?? 0),
-          });
+          setVideo(row);
         }
       } catch (loadError) {
         if (active) {
@@ -351,11 +415,31 @@ const styles = StyleSheet.create({
   playerOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'space-between',
-    paddingBottom: 18,
+  },
+  tapSurface: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  topBar: {
+    paddingTop: 10,
+    paddingHorizontal: 16,
   },
   closeButton: {
-    marginTop: 10,
-    marginLeft: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  lockedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
+    padding: 18,
+  },
+  unlockButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -367,43 +451,56 @@ const styles = StyleSheet.create({
   },
   bottomOverlay: {
     paddingHorizontal: 16,
-    gap: 12,
+    paddingBottom: 18,
   },
-  playerInfoCard: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 6,
-  },
-  playerTitle: {
-    color: LIQUID_COLORS.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  playerMeta: {
-    color: LIQUID_COLORS.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  controlsRow: {
+  bottomBar: {
+    minHeight: 68,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden',
+    backgroundColor: 'rgba(7,11,18,0.46)',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
     gap: 10,
   },
-  overlayButton: {
-    flex: 1,
-    minHeight: 56,
-    borderRadius: 18,
+  bottomIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(8,15,31,0.72)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  overlayButtonLabel: {
+  timeText: {
     color: LIQUID_COLORS.textPrimary,
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '700',
+    minWidth: 44,
+    textAlign: 'center',
+  },
+  progressWrap: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  progressTrack: {
+    height: 20,
+    justifyContent: 'center',
+  },
+  progressFill: {
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: LIQUID_COLORS.textPrimary,
+  },
+  progressThumb: {
+    position: 'absolute',
+    top: 3,
+    marginLeft: -7,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#FFFFFF',
   },
   centerState: {
     flex: 1,

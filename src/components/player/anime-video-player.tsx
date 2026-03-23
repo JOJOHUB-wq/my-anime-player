@@ -1,5 +1,6 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MediaItem, PlaybackProgress, PlayerSettings } from '@/src/types/media';
 import { formatClock } from '@/src/utils/time';
