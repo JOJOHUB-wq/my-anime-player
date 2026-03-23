@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import { Directory, File } from 'expo-file-system';
+import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -21,7 +23,7 @@ import {
   DEFAULT_PLAYLIST_ICON,
   deletePlaylistById,
   getPlaylistsWithCounts,
-  importVideoFromDocument,
+  importVideoFromSource,
   initializeDatabase,
   parseImportedFilename,
   renamePlaylist,
@@ -34,6 +36,10 @@ import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { LIQUID_COLORS } from '@/src/theme/liquid';
 
 type PlaylistMenuMode = 'actions' | 'rename' | null;
+type ImportCandidate = {
+  name: string;
+  uri: string;
+};
 
 const PLAYLIST_ICON_OPTIONS = [
   'folder-open-outline',
@@ -46,6 +52,31 @@ const PLAYLIST_ICON_OPTIONS = [
   'rocket-outline',
   'game-controller-outline',
 ] as const;
+const VIDEO_FILE_RE = /\.(?:mkv|mp4|m4v|mov|avi|webm)$/i;
+
+function isVideoFilename(name: string) {
+  return VIDEO_FILE_RE.test(name);
+}
+
+function collectDirectoryVideos(directory: Directory) {
+  const results: ImportCandidate[] = [];
+
+  for (const entry of directory.list()) {
+    if (entry instanceof Directory) {
+      results.push(...collectDirectoryVideos(entry));
+      continue;
+    }
+
+    if (entry instanceof File && isVideoFilename(entry.name)) {
+      results.push({
+        name: entry.name,
+        uri: entry.uri,
+      });
+    }
+  }
+
+  return results;
+}
 
 function resolvePlaylistIcon(icon?: string): keyof typeof Ionicons.glyphMap {
   if (icon && Object.prototype.hasOwnProperty.call(Ionicons.glyphMap, icon)) {
@@ -145,7 +176,7 @@ export default function LibraryTabScreen() {
   const [playlistMenuMode, setPlaylistMenuMode] = useState<PlaylistMenuMode>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameIconDraft, setRenameIconDraft] = useState<string>(DEFAULT_PLAYLIST_ICON);
-  const [pickedAsset, setPickedAsset] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [pickedAssets, setPickedAssets] = useState<ImportCandidate[]>([]);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [selectedImportPlaylistId, setSelectedImportPlaylistId] = useState<number | null>(null);
   const [newImportPlaylistName, setNewImportPlaylistName] = useState('');
@@ -192,13 +223,13 @@ export default function LibraryTabScreen() {
 
   const closeImportModal = useCallback(() => {
     setImportModalVisible(false);
-    setPickedAsset(null);
+    setPickedAssets([]);
     setSelectedImportPlaylistId(null);
     setNewImportPlaylistName('');
     setNewImportPlaylistIcon(DEFAULT_PLAYLIST_ICON);
   }, []);
 
-  const handleImport = useCallback(async () => {
+  const importFiles = useCallback(async () => {
     setError(null);
 
     try {
@@ -207,22 +238,34 @@ export default function LibraryTabScreen() {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'video/*',
         copyToCacheDirectory: true,
-        multiple: false,
+        multiple: true,
       });
 
-      if (result.canceled || !result.assets?.[0]) {
+      if (result.canceled || !result.assets?.length) {
         return;
       }
 
-      const asset = result.assets[0];
-      const parsed = parseImportedFilename(asset.name || '');
-      const matchedPlaylist = playlists.find(
-        (playlist) => playlist.name.trim().toLowerCase() === parsed.seriesTitle.trim().toLowerCase()
+      const assets = result.assets.map((asset) => ({
+        name: asset.name || `video-${Date.now()}.mp4`,
+        uri: asset.uri,
+      }));
+      const parsedFiles = assets.map((asset) => parseImportedFilename(asset.name || ''));
+      const firstSuggestedTitle = parsedFiles[0]?.seriesTitle ?? '';
+      const allSameSeries = parsedFiles.every(
+        (parsed) =>
+          parsed.seriesTitle.trim().toLowerCase() === firstSuggestedTitle.trim().toLowerCase()
       );
+      const matchedPlaylist =
+        allSameSeries && firstSuggestedTitle
+          ? playlists.find(
+              (playlist) =>
+                playlist.name.trim().toLowerCase() === firstSuggestedTitle.trim().toLowerCase()
+            )
+          : null;
 
-      setPickedAsset(asset);
+      setPickedAssets(assets);
       setSelectedImportPlaylistId(matchedPlaylist?.id ?? null);
-      setNewImportPlaylistName(parsed.seriesTitle);
+      setNewImportPlaylistName(allSameSeries ? firstSuggestedTitle : '');
       setNewImportPlaylistIcon(matchedPlaylist?.icon || DEFAULT_PLAYLIST_ICON);
       setImportModalVisible(true);
     } catch (importError) {
@@ -230,8 +273,46 @@ export default function LibraryTabScreen() {
     }
   }, [db, playlists]);
 
+  const importFolder = useCallback(async () => {
+    setError(null);
+
+    try {
+      await initializeDatabase(db);
+
+      const directory = (await Directory.pickDirectoryAsync()) as unknown as Directory;
+      const assets = collectDirectoryVideos(directory);
+
+      if (!assets.length) {
+        setError('У вибраній теці не знайдено жодного відеофайлу.');
+        return;
+      }
+
+      const parsedFiles = assets.map((asset) => parseImportedFilename(asset.name || ''));
+      const firstSuggestedTitle = parsedFiles[0]?.seriesTitle ?? '';
+      const allSameSeries = parsedFiles.every(
+        (parsed) =>
+          parsed.seriesTitle.trim().toLowerCase() === firstSuggestedTitle.trim().toLowerCase()
+      );
+      const matchedPlaylist =
+        allSameSeries && firstSuggestedTitle
+          ? playlists.find(
+              (playlist) =>
+                playlist.name.trim().toLowerCase() === firstSuggestedTitle.trim().toLowerCase()
+            )
+          : null;
+
+      setPickedAssets(assets);
+      setSelectedImportPlaylistId(matchedPlaylist?.id ?? null);
+      setNewImportPlaylistName(allSameSeries ? firstSuggestedTitle : directory.name || '');
+      setNewImportPlaylistIcon(matchedPlaylist?.icon || DEFAULT_PLAYLIST_ICON);
+      setImportModalVisible(true);
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : 'Не вдалося відкрити теку.');
+    }
+  }, [db, playlists]);
+
   const handleConfirmImport = useCallback(async () => {
-    if (!pickedAsset) {
+    if (!pickedAssets.length) {
       return;
     }
 
@@ -240,11 +321,18 @@ export default function LibraryTabScreen() {
 
     try {
       await initializeDatabase(db);
-      await importVideoFromDocument(db, pickedAsset, {
-        playlistId: selectedImportPlaylistId,
-        playlistName: selectedImportPlaylistId ? null : newImportPlaylistName,
-        playlistIcon: selectedImportPlaylistId ? null : newImportPlaylistIcon,
-      });
+      for (const asset of pickedAssets) {
+        const parsed = parseImportedFilename(asset.name || '');
+
+        await importVideoFromSource(db, asset, {
+          playlistId: selectedImportPlaylistId,
+          playlistName: selectedImportPlaylistId
+            ? null
+            : newImportPlaylistName.trim() || parsed.seriesTitle,
+          playlistIcon: selectedImportPlaylistId ? null : newImportPlaylistIcon,
+        });
+      }
+
       closeImportModal();
       await loadPlaylists();
     } catch (importError) {
@@ -258,7 +346,7 @@ export default function LibraryTabScreen() {
     loadPlaylists,
     newImportPlaylistIcon,
     newImportPlaylistName,
-    pickedAsset,
+    pickedAssets,
     selectedImportPlaylistId,
   ]);
 
@@ -382,10 +470,11 @@ export default function LibraryTabScreen() {
     <LiquidBackground>
       <View style={styles.header}>
         <View>
+          <Image source={require('../../assets/images/icon.png')} style={styles.appIcon} contentFit="cover" />
           <Text style={styles.eyebrow}>Авто-сортування</Text>
           <Text style={styles.title}>Бібліотека</Text>
           <Text style={styles.subtitle}>
-            Плейлисти будуються автоматично з назв файлів, а користувацькі плейлисти можна створювати вручну.
+            Можна вибрати одразу кілька файлів, а серії будуть автоматично підказані з назв епізодів.
           </Text>
         </View>
 
@@ -406,7 +495,7 @@ export default function LibraryTabScreen() {
         <Pressable
           disabled={importing}
           onPress={() => {
-            void handleImport();
+            void importFiles();
           }}
           style={[styles.primaryAction, importing && styles.actionDisabled]}>
           {importing ? (
@@ -414,9 +503,19 @@ export default function LibraryTabScreen() {
           ) : (
             <>
               <Ionicons name="cloud-upload-outline" size={18} color={LIQUID_COLORS.textPrimary} />
-              <Text style={styles.primaryActionLabel}>Імпортувати відео</Text>
+              <Text style={styles.primaryActionLabel}>Імпортувати файли</Text>
             </>
           )}
+        </Pressable>
+
+        <Pressable
+          disabled={importing}
+          onPress={() => {
+            void importFolder();
+          }}
+          style={[styles.secondaryAction, importing && styles.actionDisabled]}>
+          <Ionicons name="folder-open-outline" size={18} color={LIQUID_COLORS.textPrimary} />
+          <Text style={styles.secondaryActionLabel}>Імпортувати теку</Text>
         </Pressable>
 
         <Pressable
@@ -646,14 +745,16 @@ export default function LibraryTabScreen() {
       <Modal
         animationType="fade"
         transparent
-        visible={importModalVisible && Boolean(pickedAsset)}
+        visible={importModalVisible && pickedAssets.length > 0}
         onRequestClose={closeImportModal}>
         <View style={styles.modalBackdrop}>
           <GlassCard style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Куди додати відео</Text>
-            <Text style={styles.modalCopy} numberOfLines={2}>
-              {pickedAsset?.name ?? 'Обраний файл'}
-            </Text>
+          <Text style={styles.modalTitle}>Куди додати відео</Text>
+          <Text style={styles.modalCopy} numberOfLines={2}>
+            {pickedAssets.length === 1
+              ? pickedAssets[0]?.name ?? 'Обраний файл'
+              : `Обрано файлів: ${pickedAssets.length}`}
+          </Text>
 
             <Text style={styles.sectionLabel}>Існуючі плейлисти</Text>
             {playlists.length === 0 ? (
@@ -757,6 +858,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 16,
+  },
+  appIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    marginBottom: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   eyebrow: {
     color: LIQUID_COLORS.textMuted,

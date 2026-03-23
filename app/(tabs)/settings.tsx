@@ -1,19 +1,11 @@
-import { useFocusEffect } from '@react-navigation/native';
-import { useSQLiteContext } from 'expo-sqlite';
+import { Image } from 'expo-image';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Switch, Text, View } from 'react-native';
 
-import {
-  getSettingBoolean,
-  initializeDatabase,
-  setSettingBoolean,
-} from '@/src/db/database';
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
+import { useApp } from '@/src/providers/app-provider';
 import { LIQUID_COLORS } from '@/src/theme/liquid';
-
-const AUTO_DELETE_KEY = 'auto_delete_watched_episodes';
-const DARK_MODE_KEY = 'dark_mode_enabled';
 
 function SettingRow({
   label,
@@ -43,58 +35,33 @@ function SettingRow({
 }
 
 export default function SettingsTabScreen() {
-  const db = useSQLiteContext();
-  const [loading, setLoading] = useState(true);
+  const {
+    autoDeleteWatchedEpisodes,
+    darkModeEnabled,
+    preferencesLoading,
+    setAutoDeleteWatchedEpisodes,
+    setDarkModeEnabled,
+  } = useApp();
   const [saving, setSaving] = useState(false);
-  const [autoDelete, setAutoDelete] = useState(false);
-  const [darkTheme, setDarkTheme] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadSettings = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      await initializeDatabase(db);
-      const [storedAutoDelete, storedDarkMode] = await Promise.all([
-        getSettingBoolean(db, AUTO_DELETE_KEY, false),
-        getSettingBoolean(db, DARK_MODE_KEY, true),
-      ]);
-
-      setAutoDelete(storedAutoDelete);
-      setDarkTheme(storedDarkMode);
-    } catch {
-      setError('Не вдалося завантажити налаштування з SQLite.');
-    } finally {
-      setLoading(false);
-    }
-  }, [db]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void loadSettings();
-    }, [loadSettings])
-  );
-
   const updateSetting = useCallback(
-    async (key: string, nextValue: boolean, setter: (value: boolean) => void) => {
-      setter(nextValue);
+    async (nextValue: boolean, setter: (value: boolean) => Promise<void>) => {
       setSaving(true);
       setError(null);
 
       try {
-        await setSettingBoolean(db, key, nextValue);
+        await setter(nextValue);
       } catch {
-        setter(!nextValue);
         setError('Не вдалося зберегти налаштування.');
       } finally {
         setSaving(false);
       }
     },
-    [db]
+    []
   );
 
-  if (loading) {
+  if (preferencesLoading) {
     return (
       <LiquidBackground>
         <View style={styles.centerState}>
@@ -108,6 +75,7 @@ export default function SettingsTabScreen() {
   return (
     <LiquidBackground>
       <View style={styles.header}>
+        <Image source={require('../../assets/images/icon.png')} style={styles.appIcon} contentFit="cover" />
         <Text style={styles.eyebrow}>Параметри</Text>
         <Text style={styles.title}>Налаштування</Text>
         <Text style={styles.subtitle}>
@@ -124,27 +92,27 @@ export default function SettingsTabScreen() {
       <View style={styles.content}>
         <SettingRow
           label="Авто-видалення переглянутих серій"
-          description="Коли опцію увімкнено, майбутня логіка плеєра зможе автоматично прибирати переглянуті епізоди."
-          value={autoDelete}
+          description="Після завершення відео файл автоматично видаляється з диска та з SQLite."
+          value={autoDeleteWatchedEpisodes}
           onValueChange={(value) => {
-            void updateSetting(AUTO_DELETE_KEY, value, setAutoDelete);
+            void updateSetting(value, setAutoDeleteWatchedEpisodes);
           }}
         />
 
         <SettingRow
           label="Темна тема"
-          description="Стан темної теми теж зберігається в SQLite, навіть після повного перезапуску."
-          value={darkTheme}
+          description="Змінює глобальний фон і стиль скляних карток по всьому застосунку."
+          value={darkModeEnabled}
           onValueChange={(value) => {
-            void updateSetting(DARK_MODE_KEY, value, setDarkTheme);
+            void updateSetting(value, setDarkModeEnabled);
           }}
         />
 
         <GlassCard style={styles.noteCard}>
           <Text style={styles.noteTitle}>Статус</Text>
           <Text style={styles.noteCopy}>
-            Авто-видалення: {autoDelete ? 'увімкнено' : 'вимкнено'} • Темна тема:{' '}
-            {darkTheme ? 'увімкнено' : 'вимкнено'}
+            Авто-видалення: {autoDeleteWatchedEpisodes ? 'увімкнено' : 'вимкнено'} • Темна тема:{' '}
+            {darkModeEnabled ? 'увімкнено' : 'вимкнено'}
           </Text>
           {saving ? (
             <View style={styles.savingRow}>
@@ -163,6 +131,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 18,
+  },
+  appIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    marginBottom: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   eyebrow: {
     color: LIQUID_COLORS.textMuted,

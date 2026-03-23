@@ -34,8 +34,12 @@ export type ParsedFilename = {
   cleanedTitle: string;
 };
 
+export type ImportVideoSource = {
+  uri: string;
+  name: string;
+};
+
 const VIDEO_STORAGE_DIRECTORY = `${FileSystem.documentDirectory ?? ''}videos/`;
-const FILE_EXTENSION_RE = /\.[^.]+$/i;
 export const DEFAULT_PLAYLIST_ICON = 'folder-open-outline';
 const LEGACY_VIDEO_COLUMNS = ['id', 'uri', 'title', 'duration', 'currentTime'];
 const REQUIRED_VIDEO_COLUMNS = [
@@ -50,6 +54,9 @@ const REQUIRED_VIDEO_COLUMNS = [
 ];
 const REQUIRED_PLAYLIST_COLUMNS = ['id', 'name', 'icon', 'is_pinned'];
 const SETTINGS_TABLE_COLUMNS = ['key', 'value'];
+const EPISODE_NOISE_VALUES = new Set([240, 360, 480, 540, 576, 720, 900, 1080, 1440, 2160, 264, 265]);
+const TITLE_NOISE_RE =
+  /\b(?:x264|x265|h264|h265|hevc|aac|ac3|mvo|multi|sub|dub|anidub|webrip|web-dl|bluray|bdrip|remux|10bit|8bit)\b/gi;
 
 function normalizeSpaces(value: string) {
   return value.replace(/\s+/g, ' ').trim();
@@ -68,10 +75,6 @@ function sanitizeFilename(filename: string) {
   return normalized.includes('.') ? normalized : `${normalized}.mp4`;
 }
 
-function stripExtension(filename: string) {
-  return filename.replace(FILE_EXTENSION_RE, '');
-}
-
 function toNumber(value: unknown, fallback = 0) {
   const nextValue = Number(value);
   return Number.isFinite(nextValue) ? nextValue : fallback;
@@ -83,28 +86,41 @@ function toNullableEpisode(value: unknown) {
 }
 
 export function parseImportedFilename(filename: string): ParsedFilename {
-  const withoutExtension = stripExtension(filename);
+  const clean = filename.replace(/\.[^/.]+$/, '');
+  const explicitEpisodeMatches = [...clean.matchAll(/\b(?:episode|ep|e)\s*0*(\d{1,3})\b/gi)];
+  const bracketedEpisodeMatches = [...clean.matchAll(/\[(\d{1,4})\]/g)]
+    .map((match) => toNumber(match[1], 0))
+    .filter((value) => value > 0 && value < 500 && !EPISODE_NOISE_VALUES.has(value));
+  const trailingEpisodeMatches = [...clean.matchAll(/(?:^|[_\s-])0*(\d{1,3})(?=(?:[_\s-]|$))/g)]
+    .map((match) => toNumber(match[1], 0))
+    .filter((value) => value > 0 && value < 500 && !EPISODE_NOISE_VALUES.has(value));
 
-  let title = withoutExtension.replace(/\[.*?\]|\(.*?\)/g, '').trim();
-  let episodeNumber = 0;
-  const episodeMatch = filename.match(/(?:-\s*|Episode\s*|E|\[)(\d+)(?:\]| |$|\.)/i);
+  const episodeNumber =
+    explicitEpisodeMatches.length > 0
+      ? toNumber(explicitEpisodeMatches[explicitEpisodeMatches.length - 1]?.[1], 0)
+      : bracketedEpisodeMatches.length > 0
+        ? bracketedEpisodeMatches[bracketedEpisodeMatches.length - 1]
+        : trailingEpisodeMatches.length > 0
+          ? trailingEpisodeMatches[trailingEpisodeMatches.length - 1]
+          : 0;
 
-  if (episodeMatch?.[1]) {
-    episodeNumber = parseInt(episodeMatch[1], 10);
+  let title = clean
+    .replace(/\[.*?\]|\(.*?\)/g, ' ')
+    .replace(/[_.]+/g, ' ')
+    .replace(TITLE_NOISE_RE, ' ')
+    .replace(/\b(?:episode|ep|e)\s*0*\d{1,3}\b/gi, ' ')
+    .replace(/\s+-\s*0*\d{1,3}(?=\s*(?:-|$))/g, ' ');
+
+  if (episodeNumber > 0) {
+    title = title
+      .replace(new RegExp(`(?:^|\\s|-)0*${episodeNumber}(?=\\s|$)`, 'g'), ' ')
+      .replace(/\s+\d{1,3}[a-zA-Z]?$/, ' ');
   }
 
-  title = normalizeSpaces(
-    title
-      .replace(/_/g, ' ')
-      .replace(/\s*-\s*/g, ' - ')
-      .replace(/\b(?:Episode|E)\s*\d+\b/gi, ' ')
-      .replace(/(?:^|[\s-])\d+(?=$|[\s-])/g, ' ')
-      .replace(/^\s*-\s*/g, '')
-      .replace(/\s*-\s*$/g, '')
-  );
+  title = normalizeSpaces(title).replace(/\s+-\s+-/g, ' - ').replace(/^\s*-\s*|\s*-\s*$/g, '');
 
   if (!title) {
-    title = normalizeSpaces(withoutExtension.replace(/_/g, ' ')) || 'Без назви';
+    title = 'Unknown Series';
   }
 
   return {
@@ -345,9 +361,9 @@ export async function ensureVideoStorageDirectory() {
   await FileSystem.makeDirectoryAsync(VIDEO_STORAGE_DIRECTORY, { intermediates: true });
 }
 
-export async function importVideoFromDocument(
+export async function importVideoFromSource(
   db: SQLiteDatabase,
-  pickedAsset: DocumentPickerAsset,
+  source: ImportVideoSource,
   options?: {
     playlistId?: number | null;
     playlistName?: string | null;
@@ -356,13 +372,13 @@ export async function importVideoFromDocument(
 ) {
   await ensureVideoStorageDirectory();
 
-  const originalFilename = pickedAsset.name || `video-${Date.now()}.mp4`;
+  const originalFilename = source.name || `video-${Date.now()}.mp4`;
   const safeFilename = sanitizeFilename(originalFilename);
   const targetUri = `${VIDEO_STORAGE_DIRECTORY}${Date.now()}-${safeFilename}`;
   const parsed = parseImportedFilename(originalFilename);
 
   await FileSystem.copyAsync({
-    from: pickedAsset.uri,
+    from: source.uri,
     to: targetUri,
   });
 
@@ -397,6 +413,25 @@ export async function importVideoFromDocument(
       0
     );
   });
+}
+
+export async function importVideoFromDocument(
+  db: SQLiteDatabase,
+  pickedAsset: DocumentPickerAsset,
+  options?: {
+    playlistId?: number | null;
+    playlistName?: string | null;
+    playlistIcon?: string | null;
+  }
+) {
+  return importVideoFromSource(
+    db,
+    {
+      uri: pickedAsset.uri,
+      name: pickedAsset.name || `video-${Date.now()}.mp4`,
+    },
+    options
+  );
 }
 
 export async function createCustomPlaylist(
@@ -479,6 +514,27 @@ export async function getVideosByPlaylist(db: SQLiteDatabase, playlistId: number
     `,
     playlistId
   );
+
+  return rows.map((row) => ({
+    ...row,
+    playlist_id: toNumber(row.playlist_id),
+    episode_num: toNullableEpisode(row.episode_num),
+    progress: toNumber(row.progress, 0),
+    duration: toNumber(row.duration, 0),
+    is_pinned: toNumber(row.is_pinned, 0),
+  }));
+}
+
+export async function getAllVideos(db: SQLiteDatabase) {
+  const rows = await db.getAllAsync<VideoRow>(`
+    SELECT id, uri, filename, playlist_id, episode_num, progress, duration, is_pinned
+    FROM videos
+    ORDER BY
+      is_pinned DESC,
+      CASE WHEN episode_num IS NULL THEN 1 ELSE 0 END,
+      episode_num ASC,
+      filename COLLATE NOCASE ASC
+  `);
 
   return rows.map((row) => ({
     ...row,

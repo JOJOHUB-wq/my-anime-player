@@ -57,7 +57,12 @@
           }
         }
       ],
-      "expo-video",
+      [
+        "expo-video",
+        {
+          "supportsPictureInPicture": true
+        }
+      ],
       "expo-sqlite"
     ],
     "experiments": {

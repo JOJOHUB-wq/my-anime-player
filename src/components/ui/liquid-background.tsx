@@ -3,11 +3,14 @@ import { ReactNode } from 'react';
 import { StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { LIQUID_GRADIENT } from '@/src/theme/liquid';
+import { useApp } from '@/src/providers/app-provider';
+import { getLiquidGradient } from '@/src/theme/liquid';
 
 export function LiquidBackground({ children }: { children: ReactNode }) {
+  const { darkModeEnabled } = useApp();
+
   return (
-    <LinearGradient colors={LIQUID_GRADIENT} style={styles.root}>
+    <LinearGradient colors={getLiquidGradient(darkModeEnabled)} style={styles.root}>
       <SafeAreaView style={styles.safeArea}>{children}</SafeAreaView>
     </LinearGradient>
   );

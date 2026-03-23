@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { withLayoutContext } from 'expo-router';
 import { StyleSheet } from 'react-native';
 
+import { useApp } from '@/src/providers/app-provider';
 import { LIQUID_COLORS } from '@/src/theme/liquid';
 
 const BottomTabsNavigator = createBottomTabNavigator().Navigator;
@@ -32,6 +33,8 @@ function getTabIcon(name: string): keyof typeof Ionicons.glyphMap {
 }
 
 export default function TabsLayout() {
+  const { darkModeEnabled } = useApp();
+
   return (
     <BottomTabs
       initialRouteName="library"
@@ -42,7 +45,12 @@ export default function TabsLayout() {
         },
         tabBarActiveTintColor: LIQUID_COLORS.textPrimary,
         tabBarInactiveTintColor: LIQUID_COLORS.textMuted,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [
+          styles.tabBar,
+          {
+            backgroundColor: darkModeEnabled ? 'rgba(10,16,32,0.92)' : 'rgba(34,44,69,0.94)',
+          },
+        ],
         tabBarLabelStyle: styles.tabLabel,
         tabBarIcon: ({ color, size }) => (
           <Ionicons name={getTabIcon(route.name)} size={size} color={color} />
@@ -79,7 +87,6 @@ const styles = StyleSheet.create({
     height: 72,
     borderTopWidth: 0,
     borderRadius: 26,
-    backgroundColor: 'rgba(10,16,32,0.92)',
     elevation: 0,
   },
   tabLabel: {
