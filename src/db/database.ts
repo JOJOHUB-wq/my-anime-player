@@ -30,7 +30,9 @@ export type VideoRow = {
 
 export type ParsedFilename = {
   seriesTitle: string;
+  episode: number;
   episodeNumber: number | null;
+  cleanFilename: string;
   cleanedTitle: string;
 };
 
@@ -54,10 +56,6 @@ const REQUIRED_VIDEO_COLUMNS = [
 ];
 const REQUIRED_PLAYLIST_COLUMNS = ['id', 'name', 'icon', 'is_pinned'];
 const SETTINGS_TABLE_COLUMNS = ['key', 'value'];
-const EPISODE_NOISE_VALUES = new Set([240, 360, 480, 540, 576, 720, 900, 1080, 1440, 2160, 264, 265]);
-const TITLE_NOISE_RE =
-  /\b(?:x264|x265|h264|h265|hevc|aac|ac3|mvo|multi|sub|dub|anidub|webrip|web-dl|bluray|bdrip|remux|10bit|8bit)\b/gi;
-
 function normalizeSpaces(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -86,50 +84,46 @@ function toNullableEpisode(value: unknown) {
 }
 
 export function parseImportedFilename(filename: string): ParsedFilename {
-  const clean = filename.replace(/\.[^/.]+$/, '');
-  const explicitEpisodeMatches = [...clean.matchAll(/\b(?:episode|ep|e)\s*0*(\d{1,3})\b/gi)];
-  const bracketedEpisodeMatches = [...clean.matchAll(/\[(\d{1,4})\]/g)]
-    .map((match) => toNumber(match[1], 0))
-    .filter((value) => value > 0 && value < 500 && !EPISODE_NOISE_VALUES.has(value));
-  const trailingEpisodeMatches = [...clean.matchAll(/(?:^|[_\s-])0*(\d{1,3})(?=(?:[_\s-]|$))/g)]
-    .map((match) => toNumber(match[1], 0))
-    .filter((value) => value > 0 && value < 500 && !EPISODE_NOISE_VALUES.has(value));
+  let clean = filename.replace(/\.[^/.]+$/, '');
+  let episode = 0;
 
-  const episodeNumber =
-    explicitEpisodeMatches.length > 0
-      ? toNumber(explicitEpisodeMatches[explicitEpisodeMatches.length - 1]?.[1], 0)
-      : bracketedEpisodeMatches.length > 0
-        ? bracketedEpisodeMatches[bracketedEpisodeMatches.length - 1]
-        : trailingEpisodeMatches.length > 0
-          ? trailingEpisodeMatches[trailingEpisodeMatches.length - 1]
-          : 0;
+  let match = clean.match(/\[0*(\d+)\]/);
 
-  let title = clean
-    .replace(/\[.*?\]|\(.*?\)/g, ' ')
-    .replace(/[_.]+/g, ' ')
-    .replace(TITLE_NOISE_RE, ' ')
-    .replace(/\b(?:episode|ep|e)\s*0*\d{1,3}\b/gi, ' ')
-    .replace(/\s+-\s*0*\d{1,3}(?=\s*(?:-|$))/g, ' ');
-
-  if (episodeNumber > 0) {
-    title = title
-      .replace(new RegExp(`(?:^|\\s|-)0*${episodeNumber}(?=\\s|$)`, 'g'), ' ')
-      .replace(/\s+\d{1,3}[a-zA-Z]?$/, ' ');
+  if (!match) {
+    match = clean.match(/_0*(\d{1,4})_(?:720p|1080p|480p|x264)/i);
   }
 
-  title = normalizeSpaces(title).replace(/\s+-\s+-/g, ' - ').replace(/^\s*-\s*|\s*-\s*$/g, '');
-
-  if (!title) {
-    title = 'Unknown Series';
+  if (!match) {
+    match = clean.match(/_0*(\d{1,4})_/);
   }
+
+  if (!match) {
+    match = clean.match(/(?:Ep|Episode|E| - )0*(\d+)\b/i);
+  }
+
+  if (match) {
+    episode = parseInt(match[1], 10);
+  }
+
+  let seriesTitle = clean.replace(/\[.*?\]|\(.*?\)/g, '');
+  seriesTitle = seriesTitle.replace(/(720p|1080p|480p|x264|h264|x265|aac|mvo)/gi, '');
+  seriesTitle = seriesTitle.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const epRegex = new RegExp(`\\b0*${episode}\\b`, 'g');
+  seriesTitle = seriesTitle.replace(epRegex, '').replace(/\s+/g, ' ').trim();
+
+  if (!seriesTitle) {
+    seriesTitle = 'Unknown Series';
+  }
+
+  const cleanFilename = normalizeSpaces(clean.replace(/_/g, ' '));
 
   return {
-    seriesTitle: title,
-    episodeNumber: episodeNumber > 0 ? episodeNumber : null,
-    cleanedTitle:
-      episodeNumber > 0
-        ? `${title} - Епізод ${String(episodeNumber).padStart(2, '0')}`
-        : title,
+    seriesTitle,
+    episode,
+    episodeNumber: episode > 0 ? episode : null,
+    cleanFilename,
+    cleanedTitle: cleanFilename,
   };
 }
 
@@ -487,6 +481,30 @@ export async function getPlaylistById(db: SQLiteDatabase, playlistId: number) {
     ...row,
     is_pinned: toNumber(row.is_pinned, 0),
   };
+}
+
+export async function reparseStoredVideos(db: SQLiteDatabase) {
+  const videos = await db.getAllAsync<Pick<VideoRow, 'id' | 'filename'>>(
+    'SELECT id, filename FROM videos ORDER BY id ASC'
+  );
+
+  await db.withTransactionAsync(async () => {
+    for (const video of videos) {
+      const parsed = parseImportedFilename(video.filename);
+      const playlistId = await getOrCreatePlaylistId(db, parsed.seriesTitle);
+
+      await db.runAsync(
+        'UPDATE videos SET playlist_id = ?, episode_num = ? WHERE id = ?',
+        playlistId,
+        parsed.episodeNumber,
+        video.id
+      );
+    }
+  });
+
+  await db.runAsync(
+    'DELETE FROM playlists WHERE id NOT IN (SELECT DISTINCT playlist_id FROM videos WHERE playlist_id IS NOT NULL)'
+  );
 }
 
 export async function getAllPlaylists(db: SQLiteDatabase) {

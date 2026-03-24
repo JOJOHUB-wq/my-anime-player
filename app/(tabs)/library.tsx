@@ -26,6 +26,7 @@ import {
   importVideoFromSource,
   initializeDatabase,
   parseImportedFilename,
+  reparseStoredVideos,
   renamePlaylist,
   setPlaylistPinned,
   updatePlaylistIcon,
@@ -168,6 +169,7 @@ export default function LibraryTabScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [customPlaylistName, setCustomPlaylistName] = useState('');
@@ -350,6 +352,21 @@ export default function LibraryTabScreen() {
     selectedImportPlaylistId,
   ]);
 
+  const handleFixDatabase = useCallback(async () => {
+    setError(null);
+    setRepairing(true);
+
+    try {
+      await initializeDatabase(db);
+      await reparseStoredVideos(db);
+      await loadPlaylists();
+    } catch (repairError) {
+      setError(repairError instanceof Error ? repairError.message : 'Не вдалося перепарсити базу відео.');
+    } finally {
+      setRepairing(false);
+    }
+  }, [db, loadPlaylists]);
+
   const handleCreatePlaylist = useCallback(async () => {
     const trimmedName = customPlaylistName.trim();
     if (!trimmedName) {
@@ -525,6 +542,22 @@ export default function LibraryTabScreen() {
           style={styles.secondaryAction}>
           <Ionicons name="add-circle-outline" size={18} color={LIQUID_COLORS.textPrimary} />
           <Text style={styles.secondaryActionLabel}>Створити власний плейлист</Text>
+        </Pressable>
+
+        <Pressable
+          disabled={repairing}
+          onPress={() => {
+            void handleFixDatabase();
+          }}
+          style={[styles.secondaryAction, repairing && styles.actionDisabled]}>
+          {repairing ? (
+            <ActivityIndicator size="small" color={LIQUID_COLORS.textPrimary} />
+          ) : (
+            <>
+              <Ionicons name="build-outline" size={18} color={LIQUID_COLORS.textPrimary} />
+              <Text style={styles.secondaryActionLabel}>Fix Database</Text>
+            </>
+          )}
         </Pressable>
       </View>
 

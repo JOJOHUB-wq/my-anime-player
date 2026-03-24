@@ -20,6 +20,7 @@ import {
   DEFAULT_PLAYLIST_ICON,
   getAllPlaylists,
   getPlaylistById,
+  parseImportedFilename,
   getVideosByPlaylist,
   initializeDatabase,
   moveVideoToPlaylist,
@@ -43,7 +44,7 @@ function resolvePlaylistIcon(icon?: string): keyof typeof Ionicons.glyphMap {
 }
 
 function displayFilename(filename: string) {
-  return filename.replace(/\.[^.]+$/i, '').trim() || filename;
+  return parseImportedFilename(filename).cleanFilename || filename.replace(/\.[^.]+$/i, '').trim() || filename;
 }
 
 function formatClock(seconds: number) {
@@ -134,8 +135,7 @@ function EpisodeRow({
           {displayFilename(item.filename)}
         </Text>
         <Text style={styles.episodeMeta}>
-          {item.episode_num ? `Епізод ${String(item.episode_num).padStart(2, '0')}` : 'Спецвипуск'} •{' '}
-          {formatClock(item.progress)} / {formatClock(item.duration)}
+          Епізод {item.episode_num ?? '—'} • {formatClock(item.progress)} / {formatClock(item.duration)}
         </Text>
 
         <View style={styles.progressTrack}>
