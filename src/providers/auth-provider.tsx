@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -93,8 +94,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const sessionMutationRef = useRef(0);
 
   const persistSession = useCallback(async (nextToken: string, nextUser: AuthUser) => {
+    sessionMutationRef.current += 1;
     const nextSession: StoredSession = {
       token: nextToken,
       user: nextUser,
@@ -106,13 +109,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearSession = useCallback(async () => {
+    sessionMutationRef.current += 1;
     setToken(null);
     setUser(null);
     await deleteItem(SESSION_KEY);
   }, []);
 
   const refreshSession = useCallback(async () => {
+    const refreshVersion = sessionMutationRef.current;
     const storedSession = await getJson<StoredSession | null>(SESSION_KEY, null);
+
+    if (refreshVersion !== sessionMutationRef.current) {
+      return;
+    }
 
     if (!storedSession?.token) {
       setToken(null);
@@ -124,8 +133,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const response = await apiRequest<{ user: AuthApiUser }>('/api/me', {
         token: storedSession.token,
       });
+      if (refreshVersion !== sessionMutationRef.current) {
+        return;
+      }
       await persistSession(storedSession.token, mapApiUser(response.user));
     } catch (error) {
+      if (refreshVersion !== sessionMutationRef.current) {
+        return;
+      }
       const message = error instanceof Error ? error.message : '';
       const tokenRejected =
         message === 'Invalid or expired authentication token.' ||
