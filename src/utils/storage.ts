@@ -152,18 +152,21 @@ export async function getItem(key: string) {
   }
 
   try {
-    const secureValue = await SecureStore.getItemAsync(key);
-    if (secureValue !== null) {
-      return secureValue;
-    }
-  } catch {
-    // Fall through to file-backed storage on native when SecureStore is unavailable.
-  }
-
-  try {
     const fileStore = await readFileStore();
     if (typeof fileStore[key] === 'string') {
       return fileStore[key];
+    }
+  } catch {
+    const memoryValue = memoryStore.get(key);
+    if (memoryValue !== undefined) {
+      return memoryValue;
+    }
+  }
+
+  try {
+    const secureValue = await SecureStore.getItemAsync(key);
+    if (secureValue !== null) {
+      return secureValue;
     }
   } catch {
     return memoryStore.get(key) ?? null;
@@ -183,15 +186,15 @@ export async function setItem(key: string, value: string) {
     }
   }
 
-  try {
-    await SecureStore.setItemAsync(key, value);
-  } catch {
-    memoryStore.set(key, value);
-  }
+  memoryStore.set(key, value);
 
   const fileStore = await readFileStore();
   fileStore[key] = value;
   await writeFileStore(fileStore);
+
+  try {
+    await SecureStore.setItemAsync(key, value);
+  } catch {}
 }
 
 export async function deleteItem(key: string) {
@@ -205,15 +208,15 @@ export async function deleteItem(key: string) {
     }
   }
 
-  try {
-    await SecureStore.deleteItemAsync(key);
-  } catch {
-    memoryStore.delete(key);
-  }
+  memoryStore.delete(key);
 
   const fileStore = await readFileStore();
   delete fileStore[key];
   await writeFileStore(fileStore);
+
+  try {
+    await SecureStore.deleteItemAsync(key);
+  } catch {}
 }
 
 export async function getJson<T>(key: string, fallback: T): Promise<T> {
