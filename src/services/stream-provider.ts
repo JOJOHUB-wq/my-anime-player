@@ -32,6 +32,7 @@ type ProviderStream = {
   url?: string;
   headers?: Record<string, string>;
   subtitles?: ProviderSubtitle[];
+  label?: string;
 };
 
 export type StreamingSource = {
@@ -66,10 +67,10 @@ export type StreamingResolution = {
 };
 
 const DEFAULT_STREAM_PROVIDER_BASE_URL = 'https://animeapi.net';
-const DEFAULT_BACKEND_BASE_URL = 'http://217.60.245.84:4010';
+const DEFAULT_BACKEND_BASE_URL = 'https://217-60-245-84.sslip.io';
 
-function normalizeQuery(value: string) {
-  return value
+function normalizeQuery(value: unknown) {
+  return String(value || '')
     .replace(/[\u2013\u2014]/g, '-')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\[[^\]]*]/g, ' ')
@@ -77,9 +78,63 @@ function normalizeQuery(value: string) {
     .trim();
 }
 
+function expandRomanNumerals(value: string) {
+  return value
+    .replace(/\bii\b/gi, '2')
+    .replace(/\biii\b/gi, '3')
+    .replace(/\biv\b/gi, '4')
+    .replace(/\bv\b/gi, '5')
+    .replace(/\bvi\b/gi, '6')
+    .replace(/\bvii\b/gi, '7')
+    .replace(/\bviii\b/gi, '8')
+    .replace(/\bix\b/gi, '9')
+    .replace(/\bx\b/gi, '10');
+}
+
+function stripSeasonMarkers(value: string) {
+  return normalizeQuery(
+    value
+      .replace(/\b\d+(st|nd|rd|th)\s+season\b/gi, ' ')
+      .replace(/\bseason\s+\d+\b/gi, ' ')
+      .replace(/\bpart\s+\d+\b/gi, ' ')
+      .replace(/\bcour\s+\d+\b/gi, ' ')
+      .replace(/\bmovie\b/gi, ' ')
+      .replace(/\bova\b/gi, ' ')
+      .replace(/\bona\b/gi, ' ')
+  );
+}
+
+function buildLooseVariants(value: string) {
+  const normalized = normalizeQuery(value);
+  if (!normalized) {
+    return [] as string[];
+  }
+
+  const fragments = normalized
+    .split(/[:\-]/)
+    .map((part) => normalizeQuery(part))
+    .filter(Boolean);
+
+  const variants = new Set<string>([
+    normalized,
+    expandRomanNumerals(normalized),
+    stripSeasonMarkers(normalized),
+    stripSeasonMarkers(expandRomanNumerals(normalized)),
+    normalized.replace(/['’]/g, ''),
+    normalized.replace(/['’:&]/g, ' '),
+    ...fragments,
+    ...fragments.map(stripSeasonMarkers),
+    ...fragments.map(expandRomanNumerals),
+  ]);
+
+  return [...variants]
+    .map((part) => normalizeQuery(part))
+    .filter(Boolean);
+}
+
 function buildCandidateQueries(input: {
   title: string;
-  alternativeTitles?: string[];
+  alternativeTitles?: (string | string[] | null | undefined)[];
   franchise?: string | null;
 }) {
   const values = [
@@ -88,8 +143,11 @@ function buildCandidateQueries(input: {
     input.franchise ?? '',
     input.title.split(':')[0] ?? '',
     input.title.split('-')[0] ?? '',
+    input.title.split(':').slice(1).join(':') ?? '',
+    input.title.split('-').slice(1).join('-') ?? '',
   ]
-    .map(normalizeQuery)
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .flatMap((value) => buildLooseVariants(String(value || '')))
     .filter(Boolean);
 
   return [...new Set(values)];
@@ -174,10 +232,11 @@ function buildSources(episode: ProviderEpisode) {
   const sources: StreamingSource[] = [];
 
   if (episode.sub?.url) {
+    const label = episode.sub.label || 'Original';
     sources.push({
       url: episode.sub.url,
-      label: 'Original',
-      dub: 'Original',
+      label,
+      dub: label,
       headers: normalizeHeaders(episode.sub.headers),
     });
 
@@ -192,10 +251,11 @@ function buildSources(episode: ProviderEpisode) {
   }
 
   if (episode.dub?.url) {
+    const label = episode.dub.label || 'Dubbed';
     sources.push({
       url: episode.dub.url,
-      label: 'Dubbed',
-      dub: 'Dubbed',
+      label,
+      dub: label,
       headers: normalizeHeaders(episode.dub.headers),
     });
   }
@@ -259,13 +319,15 @@ async function fetchJson(url: string, signal?: AbortSignal) {
   return (await response.json()) as ProviderResponse;
 }
 
-async function fetchProviderCatalog(query: string, signal?: AbortSignal) {
+async function fetchProviderCatalogWithAlternatives(queries: string[], signal?: AbortSignal) {
   const providerBaseUrl = process.env.EXPO_PUBLIC_STREAM_PROVIDER_BASE_URL?.trim() || DEFAULT_STREAM_PROVIDER_BASE_URL;
   const backendBaseUrl = process.env.EXPO_PUBLIC_BACKEND_URL?.trim() || DEFAULT_BACKEND_BASE_URL;
+  const normalizedQueries = [...new Set(queries.map(normalizeQuery).filter(Boolean))];
+  const primaryQuery = normalizedQueries[0] || '';
 
   const endpoints = [
-    `${backendBaseUrl.replace(/\/+$/, '')}/api/streams/search?q=${encodeURIComponent(query)}`,
-    `${providerBaseUrl.replace(/\/+$/, '')}/anime/${encodeURIComponent(query)}`,
+    `${backendBaseUrl.replace(/\/+$/, '')}/api/streams/search?q=${encodeURIComponent(primaryQuery)}&queries=${encodeURIComponent(JSON.stringify(normalizedQueries))}`,
+    `${providerBaseUrl.replace(/\/+$/, '')}/anime/${encodeURIComponent(primaryQuery)}`,
   ];
 
   let payload: ProviderResponse | null = null;
@@ -284,12 +346,34 @@ async function fetchProviderCatalog(query: string, signal?: AbortSignal) {
   }
 
   const results = Array.isArray(payload.results) ? payload.results : [];
-  const rankedResults = [...results].sort((left, right) => scoreResult(right, query) - scoreResult(left, query));
+  const rankedResults = [...results].sort(
+    (left, right) => scoreResult(right, primaryQuery) - scoreResult(left, primaryQuery)
+  );
   const seasons = rankedResults
     .map((result) => mapResultToSeason(result))
     .filter((season): season is StreamingSeason => Boolean(season));
 
   return {
+    resolvedQuery: payload.query || primaryQuery,
+    seasons,
+  };
+}
+
+async function fetchProviderCatalog(query: string, signal?: AbortSignal) {
+  return fetchProviderCatalogWithAlternatives([query], signal);
+}
+
+function mapProviderResponseToResolution(payload: ProviderResponse, query: string): StreamingResolution {
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  const rankedResults = [...results].sort(
+    (left, right) => scoreResult(right, query) - scoreResult(left, query)
+  );
+  const seasons = rankedResults
+    .map((result) => mapResultToSeason(result))
+    .filter((season): season is StreamingSeason => Boolean(season));
+
+  return {
+    providerConfigured: true,
     resolvedQuery: payload.query || query,
     seasons,
   };
@@ -304,6 +388,20 @@ export async function resolveStreamingCatalog(
   signal?: AbortSignal
 ): Promise<StreamingResolution> {
   const candidateQueries = buildCandidateQueries(input);
+
+  try {
+    const combinedResult = await fetchProviderCatalogWithAlternatives(candidateQueries, signal);
+
+    if (combinedResult.seasons.length > 0) {
+      return {
+        providerConfigured: true,
+        resolvedQuery: combinedResult.resolvedQuery,
+        seasons: combinedResult.seasons,
+      };
+    }
+  } catch {
+    // Fall back to one-by-one queries below.
+  }
 
   for (const query of candidateQueries) {
     try {
@@ -326,4 +424,27 @@ export async function resolveStreamingCatalog(
     resolvedQuery: candidateQueries[0] ?? null,
     seasons: [],
   };
+}
+
+export async function resolveStreamingCatalogByAnimeId(animeId: number, signal?: AbortSignal) {
+  const backendBaseUrl = process.env.EXPO_PUBLIC_BACKEND_URL?.trim() || DEFAULT_BACKEND_BASE_URL;
+  const payload = await fetchJson(
+    `${backendBaseUrl.replace(/\/+$/, '')}/api/streams/shikimori/${encodeURIComponent(String(animeId))}`,
+    signal
+  );
+
+  return mapProviderResponseToResolution(payload, String(animeId));
+}
+
+export function buildStreamProxyUrl(url: string, headers?: Record<string, string>) {
+  const backendBaseUrl = process.env.EXPO_PUBLIC_BACKEND_URL?.trim() || DEFAULT_BACKEND_BASE_URL;
+  const params = new URLSearchParams({
+    url,
+  });
+
+  if (headers && Object.keys(headers).length > 0) {
+    params.set('headers', JSON.stringify(headers));
+  }
+
+  return `${backendBaseUrl.replace(/\/+$/, '')}/api/streams/proxy?${params.toString()}`;
 }

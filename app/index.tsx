@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
+import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -13,7 +14,13 @@ import { useApp } from '@/src/providers/app-provider';
 export default function WelcomeScreen() {
   const { t } = useTranslation();
   const { theme } = useApp();
-  const { user, continueAsGuest } = useAuth();
+  const { ready, user, continueAsGuest } = useAuth();
+
+  useEffect(() => {
+    if (ready && user) {
+      router.replace('/local');
+    }
+  }, [ready, user]);
 
   return (
     <LiquidBackground>

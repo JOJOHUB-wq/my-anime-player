@@ -5,9 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GestureResponderEvent,
   LayoutChangeEvent,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import Animated, {
@@ -33,6 +35,13 @@ export type PlayableMedia = {
   headers?: Record<string, string>;
 };
 
+export type PlaybackSyncCommand = {
+  id: string;
+  action: 'play' | 'pause' | 'seek';
+  currentTime: number;
+  isPlaying: boolean;
+};
+
 type PlayerSnapshot = {
   currentTime: number;
   duration: number;
@@ -43,9 +52,12 @@ type FullscreenPlayerProps = {
   media: PlayableMedia;
   title?: string;
   subtitle?: string;
+  autoPlay?: boolean;
   onClose: () => Promise<void> | void;
   onPersistProgress?: (snapshot: PlayerSnapshot) => Promise<void> | void;
   onFinished?: () => Promise<void> | void;
+  syncCommand?: PlaybackSyncCommand | null;
+  onPlaybackEvent?: (event: PlaybackSyncCommand) => Promise<void> | void;
 };
 
 function formatClock(seconds: number) {
@@ -81,14 +93,18 @@ export function FullscreenPlayer({
   media,
   title,
   subtitle,
+  autoPlay = true,
   onClose,
   onPersistProgress,
   onFinished,
+  syncCommand,
+  onPlaybackEvent,
 }: FullscreenPlayerProps) {
   const { theme } = useApp();
+  const { width } = useWindowDimensions();
   const [position, setPosition] = useState(media.progress ?? 0);
   const [duration, setDuration] = useState(media.duration ?? 0);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(autoPlay);
   const [showControls, setShowControls] = useState(true);
   const [isExpanded, setIsExpanded] = useState(true);
   const [skipFeedback, setSkipFeedback] = useState<string | null>(null);
@@ -100,6 +116,9 @@ export function FullscreenPlayer({
   const progressTrackWidthRef = useRef(1);
   const videoViewRef = useRef<VideoView | null>(null);
   const finishedRef = useRef(false);
+  const lastAppliedSyncIdRef = useRef<string | null>(null);
+  const railWidth = Math.min(width - 28, width >= 1280 ? 940 : width >= 900 ? 780 : 680);
+  const isDesktopLike = width >= 960;
 
   const overlayStyle = useAnimatedStyle(() => ({
     opacity: controlsOpacity.value,
@@ -128,9 +147,13 @@ export function FullscreenPlayer({
       },
     },
     (videoPlayer) => {
-    videoPlayer.staysActiveInBackground = true;
-    videoPlayer.currentTime = media.progress ?? 0;
-    videoPlayer.play();
+      videoPlayer.staysActiveInBackground = true;
+      videoPlayer.currentTime = media.progress ?? 0;
+      if (autoPlay) {
+        videoPlayer.play();
+      } else {
+        videoPlayer.pause();
+      }
     }
   );
 
@@ -143,6 +166,22 @@ export function FullscreenPlayer({
       await onPersistProgress(snapshot);
     },
     [onPersistProgress]
+  );
+
+  const emitPlaybackEvent = useCallback(
+    (action: PlaybackSyncCommand['action'], currentTime: number, nextIsPlaying: boolean) => {
+      if (!onPlaybackEvent) {
+        return;
+      }
+
+      void onPlaybackEvent({
+        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action,
+        currentTime,
+        isPlaying: nextIsPlaying,
+      });
+    },
+    [onPlaybackEvent]
   );
 
   const clearHideTimer = useCallback(() => {
@@ -212,6 +251,32 @@ export function FullscreenPlayer({
   }, [persistSnapshot, player]);
 
   useEffect(() => {
+    if (!syncCommand || syncCommand.id === lastAppliedSyncIdRef.current) {
+      return;
+    }
+
+    lastAppliedSyncIdRef.current = syncCommand.id;
+
+    try {
+      player.currentTime = syncCommand.currentTime;
+    } catch {
+      // Ignore desync jitter and continue applying state.
+    }
+
+    setPosition(syncCommand.currentTime);
+
+    if (syncCommand.action === 'pause' || !syncCommand.isPlaying) {
+      player.pause();
+      setIsPlaying(false);
+    } else {
+      player.play();
+      setIsPlaying(true);
+    }
+
+    revealControls();
+  }, [player, revealControls, syncCommand]);
+
+  useEffect(() => {
     if (finishedRef.current || duration <= 0) {
       return;
     }
@@ -256,6 +321,8 @@ export function FullscreenPlayer({
 
   const handleSeekBy = useCallback(
     (seconds: number) => {
+      let nextPosition = 0;
+
       try {
         player.seekBy(seconds);
       } catch {
@@ -266,28 +333,33 @@ export function FullscreenPlayer({
       setPosition((current) => {
         const nextTime = current + seconds;
         if (duration > 0) {
-          return Math.max(0, Math.min(duration, nextTime));
+          nextPosition = Math.max(0, Math.min(duration, nextTime));
+          return nextPosition;
         }
-        return Math.max(0, nextTime);
+        nextPosition = Math.max(0, nextTime);
+        return nextPosition;
       });
 
       revealControls();
       showTransientFeedback(`${seconds > 0 ? '+' : ''}${seconds}s`);
+      emitPlaybackEvent('seek', nextPosition, isPlaying);
     },
-    [duration, player, revealControls, showTransientFeedback]
+    [duration, emitPlaybackEvent, isPlaying, player, revealControls, showTransientFeedback]
   );
 
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
       player.pause();
       setIsPlaying(false);
+      emitPlaybackEvent('pause', Number.isFinite(player.currentTime) ? player.currentTime : position, false);
     } else {
       player.play();
       setIsPlaying(true);
+      emitPlaybackEvent('play', Number.isFinite(player.currentTime) ? player.currentTime : position, true);
     }
 
     revealControls();
-  }, [isPlaying, player, revealControls]);
+  }, [emitPlaybackEvent, isPlaying, player, position, revealControls]);
 
   const handleClose = useCallback(async () => {
     const snapshot = readSnapshot(player);
@@ -313,8 +385,9 @@ export function FullscreenPlayer({
       player.currentTime = nextTime;
       setPosition(nextTime);
       revealControls();
+      emitPlaybackEvent('seek', nextTime, isPlaying);
     },
-    [duration, player, revealControls]
+    [duration, emitPlaybackEvent, isPlaying, player, revealControls]
   );
 
   const handleProgressTrackPress = useCallback(
@@ -353,6 +426,54 @@ export function FullscreenPlayer({
     }
   }, [pipSupported, revealControls, showTransientFeedback]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase?.() || '';
+      if (tagName === 'input' || tagName === 'textarea') {
+        return;
+      }
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        togglePlayback();
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        handleSeekBy(-15);
+        return;
+      }
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        handleSeekBy(15);
+        return;
+      }
+
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        void handleToggleFullscreen();
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        void handleClose();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleClose, handleSeekBy, handleToggleFullscreen, togglePlayback]);
+
   const progressRatio = duration > 0 ? Math.max(0, Math.min(position / duration, 1)) : 0;
 
   return (
@@ -389,33 +510,44 @@ export function FullscreenPlayer({
         style={[styles.overlay, overlayStyle]}>
         <SafeAreaView style={styles.safeArea} pointerEvents="box-none">
           <View style={styles.topBar} pointerEvents="box-none">
-            <Pressable
-              onPress={() => {
-                void handleClose();
-              }}
+            <BlurView
+              intensity={42}
+              tint="dark"
               style={[
-                styles.iconButton,
-                styles.topBackButton,
+                styles.topBarCard,
                 {
                   backgroundColor: theme.cardBackground,
                   borderColor: theme.cardBorder,
                 },
               ]}>
-              <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
-            </Pressable>
+              <Pressable
+                onPress={() => {
+                  void handleClose();
+                }}
+                style={[
+                  styles.iconButton,
+                  styles.topBackButton,
+                  {
+                    backgroundColor: theme.surfaceMuted,
+                    borderColor: theme.cardBorder,
+                  },
+                ]}>
+                <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
+              </Pressable>
 
-            <View style={styles.titleWrap}>
-              {title ? (
-                <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>
-                  {title}
-                </Text>
-              ) : null}
-              {subtitle ? (
-                <Text style={[styles.subtitle, { color: theme.textSecondary }]} numberOfLines={1}>
-                  {subtitle}
-                </Text>
-              ) : null}
-            </View>
+              <View style={styles.titleWrap}>
+                {title ? (
+                  <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>
+                    {title}
+                  </Text>
+                ) : null}
+                {subtitle ? (
+                  <Text style={[styles.subtitle, { color: theme.textSecondary }]} numberOfLines={1}>
+                    {subtitle}
+                  </Text>
+                ) : null}
+              </View>
+            </BlurView>
           </View>
 
           <View style={styles.centerControls} pointerEvents="box-none">
@@ -424,6 +556,7 @@ export function FullscreenPlayer({
               tint="dark"
               style={[
                 styles.centerControlsBar,
+                { width: railWidth },
                 {
                   backgroundColor: theme.cardBackground,
                   borderColor: theme.cardBorder,
@@ -483,6 +616,7 @@ export function FullscreenPlayer({
               tint="dark"
               style={[
                 styles.bottomBar,
+                { width: railWidth, alignSelf: 'center' },
                 {
                   backgroundColor: theme.cardBackground,
                   borderColor: theme.cardBorder,
@@ -525,6 +659,20 @@ export function FullscreenPlayer({
               </View>
 
               <View style={styles.bottomActions}>
+                {isDesktopLike ? (
+                  <View
+                    style={[
+                      styles.shortcutHint,
+                      {
+                        backgroundColor: theme.surfaceMuted,
+                        borderColor: theme.cardBorder,
+                      },
+                    ]}>
+                    <Text style={[styles.shortcutHintText, { color: theme.textSecondary }]}>
+                      Space / ← / → / F
+                    </Text>
+                  </View>
+                ) : null}
                 <Pressable
                   onPress={() => {
                     void handleStartPictureInPicture();
@@ -587,7 +735,19 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarCard: {
+    width: '100%',
+    maxWidth: 920,
+    borderRadius: 26,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
+    overflow: 'hidden',
   },
   topBackButton: {
     flexShrink: 0,
@@ -707,8 +867,21 @@ const styles = StyleSheet.create({
   bottomActions: {
     marginTop: 14,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 10,
+  },
+  shortcutHint: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shortcutHintText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   bottomSmallButton: {
     width: 44,

@@ -1,5 +1,4 @@
 import * as SystemUI from 'expo-system-ui';
-import { useSQLiteContext } from 'expo-sqlite';
 import {
   createContext,
   type ReactNode,
@@ -16,6 +15,7 @@ import {
   setSettingBoolean,
   setSettingString,
 } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import {
   type AppLanguage,
   getDeviceLanguage,
@@ -61,7 +61,7 @@ function isThemePreset(value: string): value is ThemePresetId {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const db = useSQLiteContext();
+  const db = useDatabaseContext();
   const [ready, setReady] = useState(false);
   const [language, setLanguageState] = useState<AppLanguage>('uk');
   const [darkModeEnabled, setDarkModeEnabledState] = useState(true);

@@ -1,6 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
-import { useSQLiteContext } from 'expo-sqlite';
 import {
   createContext,
   type ReactNode,
@@ -19,6 +18,7 @@ import {
   updateVideoDownloadState,
   type VideoRow,
 } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import i18n from '@/src/i18n';
 
 type DownloadState = {
@@ -57,7 +57,7 @@ function sanitizeSegment(value: string) {
 }
 
 export function DownloadProvider({ children }: { children: ReactNode }) {
-  const db = useSQLiteContext();
+  const db = useDatabaseContext();
   const [activeDownloads, setActiveDownloads] = useState<Record<string, DownloadState>>({});
   const lastPersistRef = useRef<Record<string, number>>({});
 

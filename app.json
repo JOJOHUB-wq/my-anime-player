@@ -80,6 +80,7 @@
     },
     "extra": {
       "router": {},
+      "backendUrl": "https://217-60-245-84.sslip.io",
       "eas": {
         "projectId": "d841d1fb-f834-4371-b90b-d4140337def1"
       }

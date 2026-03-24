@@ -5,9 +5,11 @@ import {
   ActivityIndicator,
   FlatList,
   ListRenderItemInfo,
+  NativeSyntheticEvent,
   Pressable,
   StyleSheet,
   Text,
+  TextInputSubmitEditingEventData,
   TextInput,
   View,
 } from 'react-native';
@@ -40,6 +42,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     let active = true;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
     async function hydrateMessages() {
       if (!chatId) {
@@ -49,6 +52,9 @@ export default function ChatScreen() {
 
       try {
         await loadMessages(chatId);
+        interval = setInterval(() => {
+          void loadMessages(chatId);
+        }, 3500);
       } finally {
         if (active) {
           setLoading(false);
@@ -61,6 +67,9 @@ export default function ChatScreen() {
 
     return () => {
       active = false;
+      if (interval) {
+        clearInterval(interval);
+      }
     };
   }, [chatId, loadMessages]);
 
@@ -71,6 +80,10 @@ export default function ChatScreen() {
 
     await sendMessage(chatId, draft);
     setDraft('');
+  }
+
+  function handleSubmitEditing(_event: NativeSyntheticEvent<TextInputSubmitEditingEventData>) {
+    void submit();
   }
 
   const renderItem = ({ item }: ListRenderItemInfo<ChatMessage>) => {
@@ -99,10 +112,19 @@ export default function ChatScreen() {
           <Pressable onPress={() => router.back()} style={[styles.backButton, { borderColor: theme.cardBorder }]}>
             <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
           </Pressable>
-          <View style={styles.headerCopy}>
+          <Pressable
+            onPress={() => {
+              if (friend?.userId) {
+                router.push({
+                  pathname: '/user/[userId]',
+                  params: { userId: friend.userId },
+                });
+              }
+            }}
+            style={styles.headerCopy}>
             <Text style={[styles.title, { color: theme.textPrimary }]}>{friend?.name ?? 'Chat'}</Text>
             <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{friend?.handle ?? '@unknown'}</Text>
-          </View>
+          </Pressable>
         </View>
 
         <FlatList
@@ -133,7 +155,10 @@ export default function ChatScreen() {
               placeholder="Type a message"
               placeholderTextColor={theme.textMuted}
               style={[styles.input, { color: theme.textPrimary }]}
-              multiline
+              multiline={false}
+              returnKeyType="send"
+              blurOnSubmit={false}
+              onSubmitEditing={handleSubmitEditing}
             />
             <Pressable onPress={() => { void submit(); }} style={[styles.sendButton, { backgroundColor: theme.accentPrimary }]}>
               <Ionicons name="send" size={18} color="#05070F" />

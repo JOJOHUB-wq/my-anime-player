@@ -136,7 +136,7 @@ export default function TabsLayout() {
       <BottomTabs.Screen
         name="discover"
         options={{
-          title: t('tabs.discover'),
+          title: 'Online',
         }}
       />
       <BottomTabs.Screen

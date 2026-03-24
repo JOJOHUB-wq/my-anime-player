@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
-const DEFAULT_BACKEND_URL = 'http://217.60.245.84:4010';
+const DEFAULT_BACKEND_URL = 'https://217-60-245-84.sslip.io';
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -9,6 +10,13 @@ type RequestOptions = {
 };
 
 function resolveBackendBaseUrl() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.location?.origin === 'string') {
+    const origin = window.location.origin;
+    if (origin.startsWith('http')) {
+      return origin.replace(/\/+$/, '');
+    }
+  }
+
   const envUrl =
     process.env.EXPO_PUBLIC_BACKEND_URL ||
     Constants.expoConfig?.extra?.backendUrl ||

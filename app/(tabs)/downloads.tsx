@@ -3,7 +3,6 @@ import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router, useNavigation } from 'expo-router';
-import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -19,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { deleteVideoById, getDownloadRows, initializeDatabase, type DownloadRow } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import { useDownloads } from '@/src/providers/download-provider';
 import { useApp } from '@/src/providers/app-provider';
 
@@ -119,7 +119,7 @@ function DownloadCard({
 }
 
 export default function DownloadsTabScreen() {
-  const db = useSQLiteContext();
+  const db = useDatabaseContext();
   const navigation = useNavigation();
   const { t } = useTranslation();
   const { theme } = useApp();

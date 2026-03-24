@@ -1,5 +1,13 @@
 const { all, get, run } = require('../db/database');
-const { isUserConnected } = require('../sockets');
+const { emitToUser, isUserConnected } = require('../sockets');
+
+function notifyUsers(userIds, eventName, payload) {
+  [...new Set(userIds.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))].forEach(
+    (userId) => {
+      emitToUser(userId, eventName, payload);
+    }
+  );
+}
 
 function requireMember(res, user) {
   if (!user?.id || user.is_guest) {
@@ -15,6 +23,10 @@ function requireMember(res, user) {
 function buildPairKey(leftUserId, rightUserId) {
   const [a, b] = [Number(leftUserId), Number(rightUserId)].sort((left, right) => left - right);
   return `${a}:${b}`;
+}
+
+function buildRoomId(leftUserId, rightUserId) {
+  return `room:${buildPairKey(leftUserId, rightUserId)}:${Date.now()}`;
 }
 
 function mapFriendStatus(lastSeenAt, userId) {
@@ -44,10 +56,10 @@ function mapFriendStatus(lastSeenAt, userId) {
   return 'offline';
 }
 
-function mapFriendRow(row) {
+function mapUserPreview(row) {
   return {
     id: String(row.id),
-    userId: row.id,
+    userId: String(row.id),
     name: row.username,
     handle: `@${row.username}`,
     email: row.email,
@@ -56,7 +68,44 @@ function mapFriendRow(row) {
     role: row.role,
     status: mapFriendStatus(row.last_seen_at, row.id),
     invitedToRoom: Boolean(row.invited_to_room),
+    createdAt: row.created_at || row.friendship_created_at || row.request_created_at || row.invite_created_at,
+  };
+}
+
+function mapFriendRow(row) {
+  return {
+    ...mapUserPreview(row),
+    invitedToRoom: Boolean(row.invited_to_room),
     createdAt: row.friendship_created_at,
+  };
+}
+
+function mapRequestRow(row, direction) {
+  return {
+    id: String(row.request_id),
+    direction,
+    status: row.request_status,
+    createdAt: row.request_created_at,
+    user: {
+      ...mapUserPreview(row),
+      invitedToRoom: false,
+      createdAt: row.request_created_at,
+    },
+  };
+}
+
+function mapRoomInviteRow(row, direction) {
+  return {
+    id: String(row.invite_id),
+    roomId: row.room_id,
+    direction,
+    status: row.invite_status,
+    createdAt: row.invite_created_at,
+    user: {
+      ...mapUserPreview(row),
+      invitedToRoom: direction === 'outgoing',
+      createdAt: row.invite_created_at,
+    },
   };
 }
 
@@ -86,44 +135,181 @@ async function ensureExistingFriend(userId, friendId) {
   return Boolean(friendship);
 }
 
+async function getFriendshipState(viewerId, targetId) {
+  if (!viewerId || !targetId || Number(viewerId) === Number(targetId)) {
+    return 'self';
+  }
+
+  const friendship = await get(
+    `SELECT id FROM friendships WHERE user_id = ? AND friend_id = ? LIMIT 1`,
+    [viewerId, targetId]
+  );
+  if (friendship) {
+    return 'friend';
+  }
+
+  const outgoing = await get(
+    `
+      SELECT id
+      FROM friend_requests
+      WHERE sender_id = ? AND recipient_id = ? AND status = 'pending'
+      LIMIT 1
+    `,
+    [viewerId, targetId]
+  );
+  if (outgoing) {
+    return 'outgoing_request';
+  }
+
+  const incoming = await get(
+    `
+      SELECT id
+      FROM friend_requests
+      WHERE sender_id = ? AND recipient_id = ? AND status = 'pending'
+      LIMIT 1
+    `,
+    [targetId, viewerId]
+  );
+  if (incoming) {
+    return 'incoming_request';
+  }
+
+  return 'none';
+}
+
 async function listFriends(req, res) {
   if (!requireMember(res, req.user)) {
     return;
   }
 
   try {
-    const rows = await all(
-      `
-        SELECT
-          users.id,
-          users.username,
-          users.email,
-          users.role,
-          users.rank,
-          users.avatar_seed,
-          users.last_seen_at,
-          friendships.created_at AS friendship_created_at,
-          EXISTS (
-            SELECT 1
+    const [friendRows, incomingRequestRows, outgoingRequestRows, incomingInviteRows, outgoingInviteRows] =
+      await Promise.all([
+        all(
+          `
+            SELECT
+              users.id,
+              users.username,
+              users.email,
+              users.role,
+              users.rank,
+              users.avatar_seed,
+              users.last_seen_at,
+              friendships.created_at AS friendship_created_at,
+              EXISTS (
+                SELECT 1
+                FROM room_invites
+                WHERE room_invites.sender_id = ?
+                  AND room_invites.recipient_id = users.id
+                  AND room_invites.status = 'pending'
+              ) AS invited_to_room
+            FROM friendships
+            INNER JOIN users ON users.id = friendships.friend_id
+            WHERE friendships.user_id = ?
+            ORDER BY invited_to_room DESC, LOWER(users.username) ASC
+          `,
+          [req.user.id, req.user.id]
+        ),
+        all(
+          `
+            SELECT
+              friend_requests.id AS request_id,
+              friend_requests.status AS request_status,
+              friend_requests.created_at AS request_created_at,
+              users.id,
+              users.username,
+              users.email,
+              users.role,
+              users.rank,
+              users.avatar_seed,
+              users.last_seen_at,
+              0 AS invited_to_room
+            FROM friend_requests
+            INNER JOIN users ON users.id = friend_requests.sender_id
+            WHERE friend_requests.recipient_id = ?
+              AND friend_requests.status = 'pending'
+            ORDER BY datetime(friend_requests.created_at) DESC
+          `,
+          [req.user.id]
+        ),
+        all(
+          `
+            SELECT
+              friend_requests.id AS request_id,
+              friend_requests.status AS request_status,
+              friend_requests.created_at AS request_created_at,
+              users.id,
+              users.username,
+              users.email,
+              users.role,
+              users.rank,
+              users.avatar_seed,
+              users.last_seen_at,
+              0 AS invited_to_room
+            FROM friend_requests
+            INNER JOIN users ON users.id = friend_requests.recipient_id
+            WHERE friend_requests.sender_id = ?
+              AND friend_requests.status = 'pending'
+            ORDER BY datetime(friend_requests.created_at) DESC
+          `,
+          [req.user.id]
+        ),
+        all(
+          `
+            SELECT
+              room_invites.id AS invite_id,
+              room_invites.room_id,
+              room_invites.status AS invite_status,
+              room_invites.created_at AS invite_created_at,
+              users.id,
+              users.username,
+              users.email,
+              users.role,
+              users.rank,
+              users.avatar_seed,
+              users.last_seen_at,
+              0 AS invited_to_room
             FROM room_invites
-            WHERE room_invites.sender_id = ?
-              AND room_invites.recipient_id = users.id
+            INNER JOIN users ON users.id = room_invites.sender_id
+            WHERE room_invites.recipient_id = ?
               AND room_invites.status = 'pending'
-          ) AS invited_to_room
-        FROM friendships
-        INNER JOIN users ON users.id = friendships.friend_id
-        WHERE friendships.user_id = ?
-        ORDER BY
-          invited_to_room DESC,
-          LOWER(users.username) ASC
-      `,
-      [req.user.id, req.user.id]
-    );
+            ORDER BY datetime(room_invites.created_at) DESC
+          `,
+          [req.user.id]
+        ),
+        all(
+          `
+            SELECT
+              room_invites.id AS invite_id,
+              room_invites.room_id,
+              room_invites.status AS invite_status,
+              room_invites.created_at AS invite_created_at,
+              users.id,
+              users.username,
+              users.email,
+              users.role,
+              users.rank,
+              users.avatar_seed,
+              users.last_seen_at,
+              1 AS invited_to_room
+            FROM room_invites
+            INNER JOIN users ON users.id = room_invites.recipient_id
+            WHERE room_invites.sender_id = ?
+              AND room_invites.status = 'pending'
+            ORDER BY datetime(room_invites.created_at) DESC
+          `,
+          [req.user.id]
+        ),
+      ]);
 
     res.status(200).json({
-      friends: rows.map(mapFriendRow),
+      friends: friendRows.map(mapFriendRow),
+      incomingRequests: incomingRequestRows.map((row) => mapRequestRow(row, 'incoming')),
+      outgoingRequests: outgoingRequestRows.map((row) => mapRequestRow(row, 'outgoing')),
+      incomingRoomInvites: incomingInviteRows.map((row) => mapRoomInviteRow(row, 'incoming')),
+      outgoingRoomInvites: outgoingInviteRows.map((row) => mapRoomInviteRow(row, 'outgoing')),
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       error: 'Unable to load friends.',
     });
@@ -136,7 +322,7 @@ async function addFriend(req, res) {
   }
 
   try {
-    const query = String(req.body.query || '').trim();
+    const query = String(req.body.query || '').trim().replace(/^@+/, '');
 
     if (query.length < 2) {
       res.status(400).json({
@@ -145,9 +331,9 @@ async function addFriend(req, res) {
       return;
     }
 
-    const friend = await get(
+    const targetUser = await get(
       `
-        SELECT id, username, email, role, rank, avatar_seed, last_seen_at
+        SELECT id, username, email, role, rank, avatar_seed, last_seen_at, created_at
         FROM users
         WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?))
           AND is_guest = 0
@@ -156,16 +342,122 @@ async function addFriend(req, res) {
       [query, query]
     );
 
-    if (!friend) {
+    if (!targetUser) {
       res.status(404).json({
         error: 'User not found.',
       });
       return;
     }
 
-    if (Number(friend.id) === Number(req.user.id)) {
+    if (Number(targetUser.id) === Number(req.user.id)) {
       res.status(400).json({
         error: 'You cannot add yourself as a friend.',
+      });
+      return;
+    }
+
+    const existingFriendship = await ensureExistingFriend(req.user.id, targetUser.id);
+    if (existingFriendship) {
+      res.status(409).json({
+        error: 'You are already friends.',
+      });
+      return;
+    }
+
+    const incomingRequest = await get(
+      `
+        SELECT id
+        FROM friend_requests
+        WHERE sender_id = ? AND recipient_id = ? AND status = 'pending'
+        LIMIT 1
+      `,
+      [targetUser.id, req.user.id]
+    );
+
+    if (incomingRequest) {
+      res.status(409).json({
+        error: 'This user has already sent you a friend request.',
+      });
+      return;
+    }
+
+    await run(
+      `
+        INSERT INTO friend_requests (sender_id, recipient_id, status, created_at, updated_at)
+        VALUES (?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(sender_id, recipient_id)
+        DO UPDATE SET
+          status = 'pending',
+          updated_at = CURRENT_TIMESTAMP
+      `,
+      [req.user.id, targetUser.id]
+    );
+
+    const request = await get(
+      `
+        SELECT
+          friend_requests.id AS request_id,
+          friend_requests.status AS request_status,
+          friend_requests.created_at AS request_created_at,
+          users.id,
+          users.username,
+          users.email,
+          users.role,
+          users.rank,
+          users.avatar_seed,
+          users.last_seen_at,
+          0 AS invited_to_room
+        FROM friend_requests
+        INNER JOIN users ON users.id = friend_requests.recipient_id
+        WHERE friend_requests.sender_id = ?
+          AND friend_requests.recipient_id = ?
+          AND friend_requests.status = 'pending'
+        LIMIT 1
+      `,
+      [req.user.id, targetUser.id]
+    );
+
+    res.status(201).json({
+      request: request ? mapRequestRow(request, 'outgoing') : null,
+    });
+    notifyUsers([targetUser.id], 'social_refresh', {
+      reason: 'friend_request_created',
+      senderId: Number(req.user.id),
+    });
+  } catch {
+    res.status(500).json({
+      error: 'Unable to add friend.',
+    });
+  }
+}
+
+async function acceptFriendRequest(req, res) {
+  if (!requireMember(res, req.user)) {
+    return;
+  }
+
+  try {
+    const requestId = Number(req.params.requestId);
+    if (!Number.isFinite(requestId) || requestId <= 0) {
+      res.status(400).json({
+        error: 'Invalid request id.',
+      });
+      return;
+    }
+
+    const request = await get(
+      `
+        SELECT id, sender_id, recipient_id, status
+        FROM friend_requests
+        WHERE id = ? AND recipient_id = ?
+        LIMIT 1
+      `,
+      [requestId, req.user.id]
+    );
+
+    if (!request || request.status !== 'pending') {
+      res.status(404).json({
+        error: 'Friend request not found.',
       });
       return;
     }
@@ -175,15 +467,23 @@ async function addFriend(req, res) {
         INSERT OR IGNORE INTO friendships (user_id, friend_id)
         VALUES (?, ?)
       `,
-      [req.user.id, friend.id]
+      [request.sender_id, request.recipient_id]
     );
-
     await run(
       `
         INSERT OR IGNORE INTO friendships (user_id, friend_id)
         VALUES (?, ?)
       `,
-      [friend.id, req.user.id]
+      [request.recipient_id, request.sender_id]
+    );
+    await run(
+      `
+        UPDATE friend_requests
+        SET status = 'accepted',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+      [requestId]
     );
 
     const created = await get(
@@ -203,15 +503,79 @@ async function addFriend(req, res) {
         WHERE friendships.user_id = ? AND friendships.friend_id = ?
         LIMIT 1
       `,
-      [req.user.id, friend.id]
+      [req.user.id, request.sender_id]
     );
 
-    res.status(201).json({
+    res.status(200).json({
       friend: created ? mapFriendRow(created) : null,
     });
-  } catch (error) {
+    notifyUsers([request.sender_id, request.recipient_id], 'social_refresh', {
+      reason: 'friend_request_accepted',
+      requestId,
+    });
+  } catch {
     res.status(500).json({
-      error: 'Unable to add friend.',
+      error: 'Unable to accept friend request.',
+    });
+  }
+}
+
+async function declineFriendRequest(req, res) {
+  if (!requireMember(res, req.user)) {
+    return;
+  }
+
+  try {
+    const requestId = Number(req.params.requestId);
+    if (!Number.isFinite(requestId) || requestId <= 0) {
+      res.status(400).json({
+        error: 'Invalid request id.',
+      });
+      return;
+    }
+
+    const request = await get(
+      `
+        SELECT id, sender_id, recipient_id, status
+        FROM friend_requests
+        WHERE id = ?
+          AND (recipient_id = ? OR sender_id = ?)
+        LIMIT 1
+      `,
+      [requestId, req.user.id, req.user.id]
+    );
+
+    if (!request || request.status !== 'pending') {
+      res.status(404).json({
+        error: 'Friend request not found.',
+      });
+      return;
+    }
+
+    const nextStatus = Number(request.recipient_id) === Number(req.user.id) ? 'rejected' : 'cancelled';
+
+    await run(
+      `
+        UPDATE friend_requests
+        SET status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+      [nextStatus, requestId]
+    );
+
+    res.status(200).json({
+      ok: true,
+      status: nextStatus,
+    });
+    notifyUsers([request.sender_id, request.recipient_id], 'social_refresh', {
+      reason: 'friend_request_closed',
+      requestId,
+      status: nextStatus,
+    });
+  } catch {
+    res.status(500).json({
+      error: 'Unable to decline friend request.',
     });
   }
 }
@@ -238,6 +602,8 @@ async function inviteFriendToRoom(req, res) {
       return;
     }
 
+    const roomId = buildRoomId(req.user.id, friendId);
+
     await run(
       `
         UPDATE room_invites
@@ -248,19 +614,26 @@ async function inviteFriendToRoom(req, res) {
       [req.user.id, friendId]
     );
 
-    await run(
+    const result = await run(
       `
-        INSERT INTO room_invites (sender_id, recipient_id, status, created_at, updated_at)
-        VALUES (?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO room_invites (sender_id, recipient_id, room_id, status, created_at, updated_at)
+        VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `,
-      [req.user.id, friendId]
+      [req.user.id, friendId, roomId]
     );
 
     res.status(200).json({
-      ok: true,
-      invitedToRoom: true,
+      invite: {
+        id: String(result.lastID),
+        roomId,
+        invitedToRoom: true,
+      },
     });
-  } catch (error) {
+    notifyUsers([req.user.id, friendId], 'social_refresh', {
+      reason: 'room_invite_created',
+      roomId,
+    });
+  } catch {
     res.status(500).json({
       error: 'Unable to invite friend.',
     });
@@ -295,9 +668,124 @@ async function clearFriendInvite(req, res) {
       ok: true,
       invitedToRoom: false,
     });
-  } catch (error) {
+    notifyUsers([req.user.id, friendId], 'social_refresh', {
+      reason: 'room_invite_cleared',
+    });
+  } catch {
     res.status(500).json({
       error: 'Unable to clear invite.',
+    });
+  }
+}
+
+async function acceptRoomInvite(req, res) {
+  if (!requireMember(res, req.user)) {
+    return;
+  }
+
+  try {
+    const inviteId = Number(req.params.inviteId);
+    if (!Number.isFinite(inviteId) || inviteId <= 0) {
+      res.status(400).json({
+        error: 'Invalid invite id.',
+      });
+      return;
+    }
+
+    const invite = await get(
+      `
+        SELECT id, sender_id, recipient_id, room_id, status
+        FROM room_invites
+        WHERE id = ? AND recipient_id = ?
+        LIMIT 1
+      `,
+      [inviteId, req.user.id]
+    );
+
+    if (!invite || invite.status !== 'pending') {
+      res.status(404).json({
+        error: 'Room invite not found.',
+      });
+      return;
+    }
+
+    await run(
+      `
+        UPDATE room_invites
+        SET status = 'accepted',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+      [inviteId]
+    );
+
+    res.status(200).json({
+      ok: true,
+      roomId: invite.room_id,
+      senderId: String(invite.sender_id),
+    });
+    notifyUsers([invite.sender_id, invite.recipient_id], 'social_refresh', {
+      reason: 'room_invite_accepted',
+      roomId: invite.room_id,
+    });
+  } catch {
+    res.status(500).json({
+      error: 'Unable to accept room invite.',
+    });
+  }
+}
+
+async function declineRoomInvite(req, res) {
+  if (!requireMember(res, req.user)) {
+    return;
+  }
+
+  try {
+    const inviteId = Number(req.params.inviteId);
+    if (!Number.isFinite(inviteId) || inviteId <= 0) {
+      res.status(400).json({
+        error: 'Invalid invite id.',
+      });
+      return;
+    }
+
+    const invite = await get(
+      `
+        SELECT id, sender_id, recipient_id, status
+        FROM room_invites
+        WHERE id = ? AND recipient_id = ?
+        LIMIT 1
+      `,
+      [inviteId, req.user.id]
+    );
+
+    if (!invite || invite.status !== 'pending') {
+      res.status(404).json({
+        error: 'Room invite not found.',
+      });
+      return;
+    }
+
+    await run(
+      `
+        UPDATE room_invites
+        SET status = 'rejected',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+      [inviteId]
+    );
+
+    res.status(200).json({
+      ok: true,
+    });
+    notifyUsers([invite.sender_id, invite.recipient_id], 'social_refresh', {
+      reason: 'room_invite_rejected',
+      inviteId,
+    });
+  } catch {
+    res.status(500).json({
+      error: 'Unable to decline room invite.',
     });
   }
 }
@@ -340,6 +828,7 @@ async function listChats(req, res) {
         lastMessageAt: row.updated_at,
         friend: {
           id: String(row.friend_id),
+          userId: String(row.friend_id),
           name: row.username,
           handle: `@${row.username}`,
           email: row.email,
@@ -352,7 +841,7 @@ async function listChats(req, res) {
         },
       })),
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       error: 'Unable to load chats.',
     });
@@ -393,7 +882,7 @@ async function getOrCreateChat(req, res) {
 
     const thread = await get(
       `
-        SELECT id, direct_pair_key, created_at, updated_at
+        SELECT id, updated_at
         FROM chat_threads
         WHERE direct_pair_key = ?
         LIMIT 1
@@ -408,7 +897,7 @@ async function getOrCreateChat(req, res) {
         lastMessageAt: thread.updated_at,
       },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       error: 'Unable to open chat.',
     });
@@ -470,7 +959,7 @@ async function listMessages(req, res) {
         createdAt: row.created_at,
       })),
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       error: 'Unable to load messages.',
     });
@@ -553,7 +1042,19 @@ async function sendMessage(req, res) {
         createdAt: message.created_at,
       },
     });
-  } catch (error) {
+    const participantIds = thread.direct_pair_key
+      .split(':')
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    notifyUsers(participantIds, 'chat_message', {
+      chatId: String(message.thread_id),
+      messageId: String(message.id),
+    });
+    notifyUsers(participantIds, 'social_refresh', {
+      reason: 'chat_message_created',
+      chatId: String(message.thread_id),
+    });
+  } catch {
     res.status(500).json({
       error: 'Unable to send message.',
     });
@@ -598,18 +1099,76 @@ async function getCurrentUserProfile(req, res) {
         },
       },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       error: 'Unable to load current user.',
     });
   }
 }
 
+async function getPublicUserProfile(req, res) {
+  if (!requireMember(res, req.user)) {
+    return;
+  }
+
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      res.status(400).json({
+        error: 'Invalid user id.',
+      });
+      return;
+    }
+
+    const user = await getAuthenticatedUserRow(userId);
+    if (!user) {
+      res.status(404).json({
+        error: 'User not found.',
+      });
+      return;
+    }
+
+    const [friendRow, messageRow, relationship] = await Promise.all([
+      get(`SELECT COUNT(*) AS total FROM friendships WHERE user_id = ?`, [userId]),
+      get(`SELECT COUNT(*) AS total FROM chat_messages WHERE sender_id = ?`, [userId]),
+      getFriendshipState(req.user.id, userId),
+    ]);
+
+    res.status(200).json({
+      user: {
+        id: String(user.id),
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        rank: user.rank,
+        avatar_seed: user.avatar_seed,
+        created_at: user.created_at,
+        is_guest: Boolean(user.is_guest),
+        status: mapFriendStatus(user.last_seen_at, user.id),
+        stats: {
+          friends: Number(friendRow?.total || 0),
+          messages: Number(messageRow?.total || 0),
+        },
+      },
+      relationship,
+    });
+  } catch {
+    res.status(500).json({
+      error: 'Unable to load profile.',
+    });
+  }
+}
+
 module.exports = {
+  acceptFriendRequest,
+  acceptRoomInvite,
   addFriend,
   clearFriendInvite,
+  declineFriendRequest,
+  declineRoomInvite,
   getCurrentUserProfile,
   getOrCreateChat,
+  getPublicUserProfile,
   inviteFriendToRoom,
   listChats,
   listFriends,

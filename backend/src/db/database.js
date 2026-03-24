@@ -94,6 +94,20 @@ async function initializeDatabase() {
   `);
 
   await run(`
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id INTEGER NOT NULL,
+      recipient_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(sender_id, recipient_id),
+      FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(recipient_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  await run(`
     CREATE TABLE IF NOT EXISTS room_invites (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       sender_id INTEGER NOT NULL,
@@ -105,6 +119,8 @@ async function initializeDatabase() {
       FOREIGN KEY(recipient_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+
+  await ensureColumn('room_invites', 'room_id', 'TEXT');
 
   await run(`
     CREATE TABLE IF NOT EXISTS chat_threads (
@@ -127,17 +143,51 @@ async function initializeDatabase() {
     )
   `);
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS anime_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      anime_id INTEGER NOT NULL,
+      user_id INTEGER,
+      username TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_guest INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS room_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id TEXT NOT NULL,
+      user_id INTEGER,
+      username TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_guest INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
   await run(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_users_last_seen_at ON users(last_seen_at)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_friendships_user_id ON friendships(user_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_friendships_friend_id ON friendships(friend_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_friend_requests_sender_id ON friend_requests(sender_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_friend_requests_recipient_id ON friend_requests(recipient_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_friend_requests_status ON friend_requests(status)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_room_invites_sender_id ON room_invites(sender_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_room_invites_recipient_id ON room_invites(recipient_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_room_invites_status ON room_invites(status)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_room_invites_room_id ON room_invites(room_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id ON chat_messages(thread_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_chat_messages_sender_id ON chat_messages(sender_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_anime_comments_anime_id ON anime_comments(anime_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_anime_comments_user_id ON anime_comments(user_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_id)`);
 
   await run(
     `

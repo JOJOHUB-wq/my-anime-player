@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -21,7 +21,12 @@ import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useAuth } from '@/src/providers/auth-provider';
 import { useApp } from '@/src/providers/app-provider';
-import { useSocial, type SocialFriend } from '@/src/providers/social-provider';
+import {
+  useSocial,
+  type SocialFriend,
+  type SocialFriendRequest,
+  type SocialRoomInvite,
+} from '@/src/providers/social-provider';
 
 function statusColor(status: 'online' | 'offline' | 'away') {
   if (status === 'online') {
@@ -35,14 +40,24 @@ function statusColor(status: 'online' | 'offline' | 'away') {
   return '#94A3B8';
 }
 
+function Avatar({ label }: { label: string }) {
+  return (
+    <View style={styles.avatarWrap}>
+      <Text style={styles.avatarLabel}>{label.slice(0, 1).toUpperCase()}</Text>
+    </View>
+  );
+}
+
 function FriendCard({
   item,
-  onInvite,
+  onOpenProfile,
   onOpenChat,
+  onInvite,
 }: {
   item: SocialFriend;
-  onInvite: () => void;
+  onOpenProfile: () => void;
   onOpenChat: () => void;
+  onInvite: () => void;
 }) {
   const { theme } = useApp();
   const { t } = useTranslation();
@@ -50,10 +65,8 @@ function FriendCard({
 
   return (
     <GlassCard style={styles.friendCard}>
-      <Pressable onPress={onOpenChat} style={styles.friendRow}>
-        <View style={styles.avatarWrap}>
-          <Text style={styles.avatarLabel}>{item.name.slice(0, 1).toUpperCase()}</Text>
-        </View>
+      <Pressable onPress={onOpenProfile} style={styles.friendRow}>
+        <Avatar label={item.name} />
 
         <View style={styles.friendCopy}>
           <Text style={[styles.friendName, { color: theme.textPrimary }]}>{item.name}</Text>
@@ -64,21 +77,142 @@ function FriendCard({
             </Text>
           </View>
         </View>
+      </Pressable>
 
+      <View style={styles.friendActions}>
+        <Pressable onPress={onOpenChat} style={[styles.actionButton, { backgroundColor: theme.surfaceStrong }]}>
+          <Ionicons name="chatbubble-ellipses-outline" size={18} color={theme.textPrimary} />
+        </Pressable>
         <Pressable
           onPress={onInvite}
           style={[
-            styles.inviteButton,
+            styles.primaryActionButton,
             { backgroundColor: item.invitedToRoom ? theme.surfaceStrong : theme.accentPrimary },
           ]}>
-          <Text style={[styles.inviteLabel, { color: item.invitedToRoom ? theme.textPrimary : '#05070F' }]}>
+          <Ionicons
+            name={item.invitedToRoom ? 'checkmark-circle-outline' : 'people-outline'}
+            size={16}
+            color={item.invitedToRoom ? theme.textPrimary : '#05070F'}
+          />
+          <Text style={[styles.primaryActionLabel, { color: item.invitedToRoom ? theme.textPrimary : '#05070F' }]}>
             {item.invitedToRoom
               ? t('social.invited', { defaultValue: 'Invited' })
               : t('social.invite', { defaultValue: 'Invite' })}
           </Text>
         </Pressable>
-      </Pressable>
+      </View>
     </GlassCard>
+  );
+}
+
+function RequestCard({
+  item,
+  onAccept,
+  onReject,
+  type,
+}: {
+  item: SocialFriendRequest;
+  onAccept: () => void;
+  onReject: () => void;
+  type: 'incoming' | 'outgoing';
+}) {
+  const { theme } = useApp();
+  const { t } = useTranslation();
+
+  return (
+    <GlassCard style={styles.requestCard}>
+      <View style={styles.friendRow}>
+        <Avatar label={item.user.name} />
+        <View style={styles.friendCopy}>
+          <Text style={[styles.friendName, { color: theme.textPrimary }]}>{item.user.name}</Text>
+          <Text style={[styles.friendMeta, { color: theme.textSecondary }]}>
+            {type === 'incoming'
+              ? t('social.requestIncoming', { defaultValue: 'Sent you a friend request' })
+              : t('social.requestOutgoing', { defaultValue: 'Awaiting confirmation' })}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.friendActions}>
+        {type === 'incoming' ? (
+          <>
+            <Pressable onPress={onReject} style={[styles.actionButton, { backgroundColor: theme.surfaceStrong }]}>
+              <Ionicons name="close-outline" size={20} color={theme.textPrimary} />
+            </Pressable>
+            <Pressable onPress={onAccept} style={[styles.primaryActionButton, { backgroundColor: theme.accentPrimary }]}>
+              <Ionicons name="checkmark-outline" size={18} color="#05070F" />
+              <Text style={[styles.primaryActionLabel, { color: '#05070F' }]}>
+                {t('social.accept', { defaultValue: 'Accept' })}
+              </Text>
+            </Pressable>
+          </>
+        ) : (
+          <Pressable onPress={onReject} style={[styles.primaryActionButton, { backgroundColor: theme.surfaceStrong }]}>
+            <Ionicons name="close-outline" size={18} color={theme.textPrimary} />
+            <Text style={[styles.primaryActionLabel, { color: theme.textPrimary }]}>
+              {t('social.cancelRequest', { defaultValue: 'Cancel' })}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    </GlassCard>
+  );
+}
+
+function RoomInviteCard({
+  item,
+  onAccept,
+  onReject,
+}: {
+  item: SocialRoomInvite;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  const { theme } = useApp();
+  const { t } = useTranslation();
+
+  return (
+    <GlassCard style={styles.requestCard}>
+      <View style={styles.friendRow}>
+        <Avatar label={item.user.name} />
+        <View style={styles.friendCopy}>
+          <Text style={[styles.friendName, { color: theme.textPrimary }]}>{item.user.name}</Text>
+          <Text style={[styles.friendMeta, { color: theme.textSecondary }]}>
+            {t('social.roomInviteCopy', { defaultValue: 'Invited you to a co-watching room' })}
+          </Text>
+          <Text style={[styles.roomCode, { color: theme.textMuted }]}>{item.roomId}</Text>
+        </View>
+      </View>
+
+      <View style={styles.friendActions}>
+        <Pressable onPress={onReject} style={[styles.actionButton, { backgroundColor: theme.surfaceStrong }]}>
+          <Ionicons name="close-outline" size={20} color={theme.textPrimary} />
+        </Pressable>
+        <Pressable onPress={onAccept} style={[styles.primaryActionButton, { backgroundColor: theme.accentPrimary }]}>
+          <Ionicons name="play-outline" size={18} color="#05070F" />
+          <Text style={[styles.primaryActionLabel, { color: '#05070F' }]}>
+            {t('social.joinRoom', { defaultValue: 'Join' })}
+          </Text>
+        </Pressable>
+      </View>
+    </GlassCard>
+  );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  const { theme } = useApp();
+
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{title}</Text>
+      <View style={styles.sectionStack}>{children}</View>
+    </View>
   );
 }
 
@@ -87,12 +221,28 @@ export default function SocialTabScreen() {
   const { t } = useTranslation();
   const { theme } = useApp();
   const { user } = useAuth();
-  const { ready, friends, addFriend, inviteToRoom, clearInvite, getOrCreateChat, refreshSocial } = useSocial();
+  const {
+    ready,
+    friends,
+    incomingRequests,
+    outgoingRequests,
+    incomingRoomInvites,
+    addFriend,
+    acceptFriendRequest,
+    declineFriendRequest,
+    inviteToRoom,
+    clearInvite,
+    acceptRoomInvite,
+    declineRoomInvite,
+    getOrCreateChat,
+    refreshSocial,
+  } = useSocial();
   const { width } = useWindowDimensions();
   const [modalVisible, setModalVisible] = useState(false);
   const [friendQuery, setFriendQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     navigation.setOptions({
@@ -115,11 +265,13 @@ export default function SocialTabScreen() {
   async function handleAddFriend() {
     setLoading(true);
     setError(null);
+    setMessage(null);
 
     try {
       await addFriend(friendQuery);
       setFriendQuery('');
       setModalVisible(false);
+      setMessage(t('social.requestSent', { defaultValue: 'Friend request sent.' }));
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : t('social.addError', { defaultValue: 'Unable to add this friend.' }));
     } finally {
@@ -130,8 +282,11 @@ export default function SocialTabScreen() {
   const renderItem = ({ item }: ListRenderItemInfo<SocialFriend>) => (
     <FriendCard
       item={item}
-      onInvite={() => {
-        void (item.invitedToRoom ? clearInvite(item.userId) : inviteToRoom(item.userId));
+      onOpenProfile={() => {
+        router.push({
+          pathname: '/user/[userId]',
+          params: { userId: item.userId },
+        });
       }}
       onOpenChat={() => {
         void (async () => {
@@ -140,6 +295,27 @@ export default function SocialTabScreen() {
             pathname: '/chat/[chatId]',
             params: { chatId: chat.id },
           });
+        })();
+      }}
+      onInvite={() => {
+        void (async () => {
+          try {
+            if (item.invitedToRoom) {
+              await clearInvite(item.userId);
+            } else {
+              const invite = await inviteToRoom(item.userId);
+              if (invite?.roomId) {
+                router.push({
+                  pathname: '/room/[roomId]',
+                  params: { roomId: invite.roomId },
+                });
+              } else {
+                setMessage(t('social.roomInviteSent', { defaultValue: 'Room invite sent.' }));
+              }
+            }
+          } catch (inviteError) {
+            setError(inviteError instanceof Error ? inviteError.message : t('social.addError', { defaultValue: 'Unable to send the invite.' }));
+          }
         })();
       }}
     />
@@ -160,7 +336,7 @@ export default function SocialTabScreen() {
             contentContainerStyle={[
               styles.content,
               { maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%' },
-              sortedFriends.length === 0 && styles.contentEmpty,
+              sortedFriends.length === 0 && incomingRequests.length === 0 && outgoingRequests.length === 0 && incomingRoomInvites.length === 0 && styles.contentEmpty,
             ]}
             showsVerticalScrollIndicator={false}
             ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
@@ -171,7 +347,7 @@ export default function SocialTabScreen() {
                     <Text style={[styles.eyebrow, { color: theme.textMuted }]}>{t('social.eyebrow', { defaultValue: 'Community' })}</Text>
                     <Text style={[styles.title, { color: theme.textPrimary }]}>{t('social.title', { defaultValue: 'Social' })}</Text>
                     <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-                      {t('social.subtitle', { defaultValue: 'Build your friend list, invite contacts to co-watching rooms, and jump into chats.' })}
+                      {t('social.subtitle', { defaultValue: 'Manage friends, requests, rooms, and chats from one place.' })}
                     </Text>
                   </View>
 
@@ -188,6 +364,18 @@ export default function SocialTabScreen() {
                   </View>
                 </View>
 
+                {message ? (
+                  <GlassCard style={styles.noticeCard}>
+                    <Text style={[styles.noticeCopy, { color: theme.textPrimary }]}>{message}</Text>
+                  </GlassCard>
+                ) : null}
+
+                {error ? (
+                  <GlassCard style={styles.noticeCard}>
+                    <Text style={[styles.noticeCopy, { color: theme.danger }]}>{error}</Text>
+                  </GlassCard>
+                ) : null}
+
                 {!user || user.isGuest ? (
                   <GlassCard style={styles.noticeCard}>
                     <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>{t('social.guestTitle', { defaultValue: 'Sign in for full social features' })}</Text>
@@ -197,14 +385,78 @@ export default function SocialTabScreen() {
                     </Pressable>
                   </GlassCard>
                 ) : null}
+
+                {incomingRequests.length > 0 ? (
+                  <Section title={t('social.incomingRequests', { defaultValue: 'Incoming requests' })}>
+                    {incomingRequests.map((request) => (
+                      <RequestCard
+                        key={request.id}
+                        item={request}
+                        type="incoming"
+                        onAccept={() => {
+                          void acceptFriendRequest(request.id);
+                        }}
+                        onReject={() => {
+                          void declineFriendRequest(request.id);
+                        }}
+                      />
+                    ))}
+                  </Section>
+                ) : null}
+
+                {outgoingRequests.length > 0 ? (
+                  <Section title={t('social.outgoingRequests', { defaultValue: 'Sent requests' })}>
+                    {outgoingRequests.map((request) => (
+                      <RequestCard
+                        key={request.id}
+                        item={request}
+                        type="outgoing"
+                        onAccept={() => undefined}
+                        onReject={() => {
+                          void declineFriendRequest(request.id);
+                        }}
+                      />
+                    ))}
+                  </Section>
+                ) : null}
+
+                {incomingRoomInvites.length > 0 ? (
+                  <Section title={t('social.roomInvites', { defaultValue: 'Room invites' })}>
+                    {incomingRoomInvites.map((invite) => (
+                      <RoomInviteCard
+                        key={invite.id}
+                        item={invite}
+                        onAccept={() => {
+                          void (async () => {
+                            try {
+                              const accepted = await acceptRoomInvite(invite.id);
+                              router.push({
+                                pathname: '/room/[roomId]',
+                                params: { roomId: accepted.roomId },
+                              });
+                            } catch (inviteError) {
+                              setError(inviteError instanceof Error ? inviteError.message : t('social.addError', { defaultValue: 'Unable to join room.' }));
+                            }
+                          })();
+                        }}
+                        onReject={() => {
+                          void declineRoomInvite(invite.id);
+                        }}
+                      />
+                    ))}
+                  </Section>
+                ) : null}
+
+                <Section title={t('social.friendsTitle', { defaultValue: 'Friends' })}>
+                  {sortedFriends.length === 0 ? (
+                    <GlassCard style={styles.emptyCard}>
+                      <Ionicons name="people-outline" size={30} color={theme.textPrimary} />
+                      <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>{t('social.emptyTitle', { defaultValue: 'No friends yet' })}</Text>
+                      <Text style={[styles.emptyCopy, { color: theme.textSecondary }]}>{t('social.emptyCopy', { defaultValue: 'Tap + to send your first friend request.' })}</Text>
+                    </GlassCard>
+                  ) : null}
+                </Section>
               </View>
-            }
-            ListEmptyComponent={
-              <GlassCard style={styles.emptyCard}>
-                <Ionicons name="people-outline" size={30} color={theme.textPrimary} />
-                <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>{t('social.emptyTitle', { defaultValue: 'No friends yet' })}</Text>
-                <Text style={[styles.emptyCopy, { color: theme.textSecondary }]}>{t('social.emptyCopy', { defaultValue: 'Tap + to add your first contact and start a local Telegram-style chat.' })}</Text>
-              </GlassCard>
             }
           />
         )}
@@ -221,6 +473,10 @@ export default function SocialTabScreen() {
                 placeholderTextColor={theme.textMuted}
                 style={[styles.input, { color: theme.textPrimary, borderColor: theme.cardBorder, backgroundColor: theme.inputBackground }]}
                 autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={() => {
+                  void handleAddFriend();
+                }}
               />
 
               {error ? <Text style={[styles.errorText, { color: theme.danger }]}>{error}</Text> : null}
@@ -250,20 +506,24 @@ const styles = StyleSheet.create({
   centerState: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 120 },
   contentEmpty: { flexGrow: 1 },
-  header: { marginBottom: 22 },
+  header: { marginBottom: 22, gap: 18 },
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 },
   headerCopy: { flex: 1 },
   eyebrow: { fontSize: 12, fontWeight: '800', letterSpacing: 1.3, textTransform: 'uppercase' },
   title: { marginTop: 8, fontSize: 34, fontWeight: '900' },
-  subtitle: { marginTop: 10, fontSize: 14, lineHeight: 20, maxWidth: 320 },
+  subtitle: { marginTop: 10, fontSize: 14, lineHeight: 20, maxWidth: 360 },
   headerActions: { flexDirection: 'row', gap: 10 },
   headerButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  noticeCard: { marginTop: 16, padding: 16, gap: 10 },
+  noticeCard: { padding: 16, gap: 10 },
   noticeTitle: { fontSize: 16, fontWeight: '900' },
   noticeCopy: { fontSize: 14, lineHeight: 20 },
   noticeButton: { alignSelf: 'flex-start', minHeight: 42, paddingHorizontal: 16, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   noticeButtonLabel: { color: '#05070F', fontSize: 14, fontWeight: '900' },
-  friendCard: { padding: 16 },
+  section: { gap: 10 },
+  sectionTitle: { fontSize: 18, fontWeight: '900' },
+  sectionStack: { gap: 12 },
+  friendCard: { padding: 16, gap: 14 },
+  requestCard: { padding: 16, gap: 14 },
   friendRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   avatarWrap: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)' },
   avatarLabel: { color: '#FFFFFF', fontSize: 18, fontWeight: '900' },
@@ -272,9 +532,12 @@ const styles = StyleSheet.create({
   metaRow: { marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
   statusDot: { width: 8, height: 8, borderRadius: 999 },
   friendMeta: { fontSize: 13, fontWeight: '600' },
-  inviteButton: { minHeight: 40, paddingHorizontal: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  inviteLabel: { fontSize: 13, fontWeight: '900' },
-  emptyCard: { flex: 1, padding: 22, alignItems: 'center', justifyContent: 'center' },
+  roomCode: { marginTop: 6, fontSize: 11, fontWeight: '700' },
+  friendActions: { flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'flex-end' },
+  actionButton: { minWidth: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  primaryActionButton: { minHeight: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, flexDirection: 'row', gap: 8 },
+  primaryActionLabel: { fontSize: 13, fontWeight: '900' },
+  emptyCard: { padding: 22, alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { marginTop: 12, fontSize: 18, fontWeight: '900' },
   emptyCopy: { marginTop: 8, fontSize: 14, lineHeight: 20, textAlign: 'center' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(2,6,23,0.45)', justifyContent: 'center', padding: 20 },

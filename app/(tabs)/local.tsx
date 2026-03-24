@@ -5,7 +5,6 @@ import { Directory, File } from 'expo-file-system';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router, useNavigation } from 'expo-router';
-import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -38,12 +37,14 @@ import {
   updatePlaylistIcon,
   type PlaylistRow,
 } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import { useApp } from '@/src/providers/app-provider';
 
 type PlaylistMenuMode = 'actions' | 'rename' | null;
 type ImportCandidate = {
   name: string;
   uri: string;
+  file?: Blob | null;
 };
 
 const PLAYLIST_ICON_OPTIONS = [
@@ -278,7 +279,7 @@ function IconPicker({
 }
 
 export default function LocalTabScreen() {
-  const db = useSQLiteContext();
+  const db = useDatabaseContext();
   const navigation = useNavigation();
   const { t } = useTranslation();
   const { theme } = useApp();
@@ -407,6 +408,10 @@ export default function LocalTabScreen() {
         result.assets.map((asset) => ({
           name: asset.name || `video-${Date.now()}.mp4`,
           uri: asset.uri,
+          file:
+            'file' in asset && asset.file instanceof Blob
+              ? asset.file
+              : null,
         }))
       );
     } catch (importError) {

@@ -125,8 +125,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token: storedSession.token,
       });
       await persistSession(storedSession.token, mapApiUser(response.user));
-    } catch {
-      await clearSession();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      const tokenRejected =
+        message === 'Invalid or expired authentication token.' ||
+        message === 'Authentication token is required.' ||
+        message.startsWith('HTTP 401');
+
+      if (tokenRejected) {
+        await clearSession();
+        return;
+      }
+
+      setToken(storedSession.token);
+      setUser(storedSession.user);
     }
   }, [clearSession, persistSession]);
 

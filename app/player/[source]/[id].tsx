@@ -1,6 +1,5 @@
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -16,10 +15,11 @@ import {
   updateVideoProgress,
   type VideoRow,
 } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import { useApp } from '@/src/providers/app-provider';
 
 export default function PlayerScreen() {
-  const db = useSQLiteContext();
+  const db = useDatabaseContext();
   const { t } = useTranslation();
   const { autoDeleteWatchedEpisodes, theme } = useApp();
   const params = useLocalSearchParams<{ id?: string | string[] }>();

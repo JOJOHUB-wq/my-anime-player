@@ -3,7 +3,6 @@ import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
-import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -37,6 +36,7 @@ import {
   type PlaylistDetailRow,
   type VideoRow,
 } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import { useApp } from '@/src/providers/app-provider';
 
 type VideoMenuMode = 'actions' | 'rename' | 'move' | null;
@@ -172,7 +172,7 @@ function EpisodeRow({
 }
 
 export default function FolderScreen() {
-  const db = useSQLiteContext();
+  const db = useDatabaseContext();
   const navigation = useNavigation();
   const { t } = useTranslation();
   const { theme } = useApp();

@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { router } from 'expo-router';
-import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -19,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { getAllVideos, initializeDatabase, parseImportedFilename, type VideoRow } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import { useAuth } from '@/src/providers/auth-provider';
 import { useApp } from '@/src/providers/app-provider';
 
@@ -55,7 +55,7 @@ function HistoryCard({ item, index }: { item: VideoRow; index: number }) {
 }
 
 export default function ProfileScreen() {
-  const db = useSQLiteContext();
+  const db = useDatabaseContext();
   const navigation = useNavigation();
   const { t } = useTranslation();
   const { theme } = useApp();

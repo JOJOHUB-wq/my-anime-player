@@ -1,12 +1,11 @@
 import { Stack } from 'expo-router';
-import { SQLiteProvider } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { I18nextProvider } from 'react-i18next';
 
-import { initializeDatabase } from '@/src/db/database';
+import { DatabaseProvider } from '@/src/db/db-context';
 import i18n, { getDeviceLanguage, initializeI18n } from '@/src/i18n';
 import { AppProvider } from '@/src/providers/app-provider';
 import { AuthProvider } from '@/src/providers/auth-provider';
@@ -64,7 +63,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <I18nextProvider i18n={i18n}>
-        <SQLiteProvider databaseName="media-manager.db" onInit={initializeDatabase}>
+        <DatabaseProvider>
           <AppProvider>
             <AuthProvider>
               <SocialProvider>
@@ -83,9 +82,12 @@ export default function RootLayout() {
                     <Stack.Screen name="auth/verify" />
                     <Stack.Screen name="auth/two-factor" />
                     <Stack.Screen name="chat/[chatId]" />
+                    <Stack.Screen name="room/[roomId]" />
                     <Stack.Screen name="profile" />
+                    <Stack.Screen name="user/[userId]" />
                     <Stack.Screen name="folder/[folderKey]" />
                     <Stack.Screen name="online/[id]" />
+                    <Stack.Screen name="player/webview" options={{ presentation: 'fullScreenModal' }} />
                     <Stack.Screen name="player/[source]/[id]" options={{ presentation: 'fullScreenModal' }} />
                     <Stack.Screen name="+not-found" />
                   </Stack>
@@ -94,7 +96,7 @@ export default function RootLayout() {
             </AuthProvider>
             <StatusBar style="light" />
           </AppProvider>
-        </SQLiteProvider>
+        </DatabaseProvider>
       </I18nextProvider>
     </GestureHandlerRootView>
   );

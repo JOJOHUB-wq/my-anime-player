@@ -24,7 +24,7 @@ export default function AuthEntryScreen() {
   const paramMode = Array.isArray(params.mode) ? params.mode[0] : params.mode;
   const { t } = useTranslation();
   const { theme } = useApp();
-  const { startLogin, startRegister } = useAuth();
+  const { ready, user, startLogin, startRegister } = useAuth();
   const [mode, setMode] = useState<Mode>(paramMode === 'login' ? 'login' : 'register');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -37,6 +37,12 @@ export default function AuthEntryScreen() {
       setMode(paramMode);
     }
   }, [paramMode]);
+
+  useEffect(() => {
+    if (ready && user) {
+      router.replace('/local');
+    }
+  }, [ready, user]);
 
   async function submit() {
     setLoading(true);
