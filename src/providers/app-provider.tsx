@@ -1,4 +1,3 @@
-import * as SystemUI from 'expo-system-ui';
 import {
   createContext,
   type ReactNode,
@@ -99,8 +98,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setThemePresetState(resolvedThemePreset);
       setLanguageState(resolvedLanguage);
 
-      const theme = getPremiumTheme(resolvedThemePreset);
-      await SystemUI.setBackgroundColorAsync(theme.gradient[0]);
     } finally {
       setReady(true);
     }
@@ -121,10 +118,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setDarkModeEnabledState(value);
       await initializeDatabase(db);
       await setSettingBoolean(db, DARK_MODE_KEY, value);
-      const theme = getPremiumTheme(themePreset);
-      await SystemUI.setBackgroundColorAsync(theme.gradient[0]);
     },
-    [db, themePreset]
+    [db]
   );
 
   const setAutoDeleteWatchedEpisodes = useCallback(
@@ -142,8 +137,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await setItem(THEME_PRESET_KEY, value);
       await initializeDatabase(db);
       await setSettingString(db, THEME_PRESET_KEY, value);
-      const theme = getPremiumTheme(value);
-      await SystemUI.setBackgroundColorAsync(theme.gradient[0]);
     },
     [db]
   );

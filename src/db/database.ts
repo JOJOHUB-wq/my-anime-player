@@ -1,7 +1,6 @@
 import type { DocumentPickerAsset } from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { SQLiteDatabase } from 'expo-sqlite';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Platform } from 'react-native';
 
 import { deleteWebBlob, getJson, getWebBlob, saveWebBlob, setJson } from '@/src/utils/storage';
@@ -68,7 +67,6 @@ export type ImportVideoSource = {
 };
 
 const VIDEO_STORAGE_DIRECTORY = `${FileSystem.documentDirectory ?? ''}videos/`;
-const THUMBNAIL_STORAGE_DIRECTORY = `${FileSystem.documentDirectory ?? ''}thumbnails/`;
 export const DEFAULT_PLAYLIST_ICON = 'folder-open-outline';
 const LEGACY_VIDEO_COLUMNS = ['id', 'uri', 'title', 'duration', 'currentTime'];
 const REQUIRED_VIDEO_COLUMNS = [
@@ -644,33 +642,10 @@ export async function ensureVideoStorageDirectory() {
   await FileSystem.makeDirectoryAsync(VIDEO_STORAGE_DIRECTORY, { intermediates: true });
 }
 
-async function ensureThumbnailStorageDirectory() {
-  if (!FileSystem.documentDirectory) {
-    throw new Error('Локальна директорія недоступна.');
-  }
-
-  await FileSystem.makeDirectoryAsync(THUMBNAIL_STORAGE_DIRECTORY, { intermediates: true });
-}
-
 async function generateThumbnailUri(videoUri: string, safeFilename: string) {
-  await ensureThumbnailStorageDirectory();
-
-  try {
-    const thumbnail = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 5000 });
-    const thumbnailBaseName = safeFilename.replace(/\.[^.]+$/i, '') || `thumbnail-${Date.now()}`;
-    const targetUri = `${THUMBNAIL_STORAGE_DIRECTORY}${Date.now()}-${thumbnailBaseName}.jpg`;
-
-    await FileSystem.copyAsync({
-      from: thumbnail.uri,
-      to: targetUri,
-    });
-
-    await FileSystem.deleteAsync(thumbnail.uri, { idempotent: true }).catch(() => undefined);
-
-    return targetUri;
-  } catch {
-    return null;
-  }
+  void videoUri;
+  void safeFilename;
+  return null;
 }
 
 export async function importVideoFromSource(
