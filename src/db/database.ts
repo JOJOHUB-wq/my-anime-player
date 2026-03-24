@@ -1,6 +1,7 @@
 import type { DocumentPickerAsset } from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 
 export type PlaylistRow = {
   id: number;
@@ -8,6 +9,7 @@ export type PlaylistRow = {
   icon: string;
   is_pinned: number;
   videoCount: number;
+  thumbnailUri: string | null;
 };
 
 export type PlaylistDetailRow = {
@@ -21,11 +23,21 @@ export type VideoRow = {
   id: number;
   uri: string;
   filename: string;
+  thumbnail_uri: string | null;
   playlist_id: number;
   episode_num: number | null;
   progress: number;
   duration: number;
   is_pinned: number;
+  external_id: string | null;
+  remote_url: string | null;
+  download_status: string;
+  download_progress: number;
+};
+
+export type DownloadRow = VideoRow & {
+  playlist_name: string;
+  playlist_icon: string;
 };
 
 export type ParsedFilename = {
@@ -42,17 +54,23 @@ export type ImportVideoSource = {
 };
 
 const VIDEO_STORAGE_DIRECTORY = `${FileSystem.documentDirectory ?? ''}videos/`;
+const THUMBNAIL_STORAGE_DIRECTORY = `${FileSystem.documentDirectory ?? ''}thumbnails/`;
 export const DEFAULT_PLAYLIST_ICON = 'folder-open-outline';
 const LEGACY_VIDEO_COLUMNS = ['id', 'uri', 'title', 'duration', 'currentTime'];
 const REQUIRED_VIDEO_COLUMNS = [
   'id',
   'uri',
   'filename',
+  'thumbnail_uri',
   'playlist_id',
   'episode_num',
   'progress',
   'duration',
   'is_pinned',
+  'external_id',
+  'remote_url',
+  'download_status',
+  'download_progress',
 ];
 const REQUIRED_PLAYLIST_COLUMNS = ['id', 'name', 'icon', 'is_pinned'];
 const SETTINGS_TABLE_COLUMNS = ['key', 'value'];
@@ -81,6 +99,14 @@ function toNumber(value: unknown, fallback = 0) {
 function toNullableEpisode(value: unknown) {
   const nextValue = Number(value);
   return Number.isFinite(nextValue) && nextValue > 0 ? nextValue : null;
+}
+
+function toNullableString(value: unknown) {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function toDownloadStatus(value: unknown) {
+  return typeof value === 'string' && value.length > 0 ? value : 'none';
 }
 
 export function parseImportedFilename(filename: string): ParsedFilename {
@@ -158,11 +184,16 @@ async function createVideosTable(db: SQLiteDatabase) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       uri TEXT,
       filename TEXT,
+      thumbnail_uri TEXT,
       playlist_id INTEGER,
       episode_num INTEGER,
       progress REAL,
       duration REAL,
       is_pinned BOOLEAN DEFAULT 0,
+      external_id TEXT,
+      remote_url TEXT,
+      download_status TEXT NOT NULL DEFAULT 'none',
+      download_progress REAL NOT NULL DEFAULT 0,
       FOREIGN KEY(playlist_id) REFERENCES playlists(id)
     );
   `);
@@ -234,20 +265,30 @@ async function migrateLegacyVideosRows(
         INSERT INTO videos (
           uri,
           filename,
+          thumbnail_uri,
           playlist_id,
           episode_num,
           progress,
           duration,
-          is_pinned
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          is_pinned,
+          external_id,
+          remote_url,
+          download_status,
+          download_progress
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       uri,
       filename,
+      toNullableString(row.thumbnail_uri),
       playlistId,
       parsed.episodeNumber,
       toNumber(row.progress ?? row.currentTime, 0),
       toNumber(row.duration, 0),
-      toNumber(row.is_pinned, 0)
+      toNumber(row.is_pinned, 0),
+      toNullableString(row.external_id),
+      toNullableString(row.remote_url),
+      toDownloadStatus(row.download_status),
+      toNumber(row.download_progress, 0)
     );
   }
 }
@@ -264,6 +305,34 @@ async function migrateVideosTable(db: SQLiteDatabase) {
   const isCurrentShape = REQUIRED_VIDEO_COLUMNS.every((column) => columnNames.has(column));
 
   if (isCurrentShape) {
+    return;
+  }
+
+  if (!isLegacyShape && columnNames.has('filename') && columnNames.has('uri')) {
+    if (!columnNames.has('thumbnail_uri')) {
+      await db.execAsync('ALTER TABLE videos ADD COLUMN thumbnail_uri TEXT;');
+    }
+
+    if (!columnNames.has('is_pinned')) {
+      await db.execAsync('ALTER TABLE videos ADD COLUMN is_pinned BOOLEAN DEFAULT 0;');
+    }
+
+    if (!columnNames.has('external_id')) {
+      await db.execAsync('ALTER TABLE videos ADD COLUMN external_id TEXT;');
+    }
+
+    if (!columnNames.has('remote_url')) {
+      await db.execAsync('ALTER TABLE videos ADD COLUMN remote_url TEXT;');
+    }
+
+    if (!columnNames.has('download_status')) {
+      await db.execAsync("ALTER TABLE videos ADD COLUMN download_status TEXT NOT NULL DEFAULT 'none';");
+    }
+
+    if (!columnNames.has('download_progress')) {
+      await db.execAsync('ALTER TABLE videos ADD COLUMN download_progress REAL NOT NULL DEFAULT 0;');
+    }
+
     return;
   }
 
@@ -328,6 +397,11 @@ async function ensureDatabaseIndexes(db: SQLiteDatabase) {
       ON playlists (is_pinned, name);
     CREATE INDEX IF NOT EXISTS idx_videos_playlist_sort
       ON videos (playlist_id, is_pinned, episode_num, filename);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_videos_external_id
+      ON videos (external_id)
+      WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_videos_download_status
+      ON videos (download_status, download_progress);
   `);
 }
 
@@ -355,6 +429,35 @@ export async function ensureVideoStorageDirectory() {
   await FileSystem.makeDirectoryAsync(VIDEO_STORAGE_DIRECTORY, { intermediates: true });
 }
 
+async function ensureThumbnailStorageDirectory() {
+  if (!FileSystem.documentDirectory) {
+    throw new Error('Локальна директорія недоступна.');
+  }
+
+  await FileSystem.makeDirectoryAsync(THUMBNAIL_STORAGE_DIRECTORY, { intermediates: true });
+}
+
+async function generateThumbnailUri(videoUri: string, safeFilename: string) {
+  await ensureThumbnailStorageDirectory();
+
+  try {
+    const thumbnail = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 5000 });
+    const thumbnailBaseName = safeFilename.replace(/\.[^.]+$/i, '') || `thumbnail-${Date.now()}`;
+    const targetUri = `${THUMBNAIL_STORAGE_DIRECTORY}${Date.now()}-${thumbnailBaseName}.jpg`;
+
+    await FileSystem.copyAsync({
+      from: thumbnail.uri,
+      to: targetUri,
+    });
+
+    await FileSystem.deleteAsync(thumbnail.uri, { idempotent: true }).catch(() => undefined);
+
+    return targetUri;
+  } catch {
+    return null;
+  }
+}
+
 export async function importVideoFromSource(
   db: SQLiteDatabase,
   source: ImportVideoSource,
@@ -376,6 +479,8 @@ export async function importVideoFromSource(
     to: targetUri,
   });
 
+  const thumbnailUri = await generateThumbnailUri(targetUri, safeFilename);
+
   await db.withTransactionAsync(async () => {
     const resolvedPlaylistId =
       options?.playlistId && Number.isFinite(options.playlistId) && options.playlistId > 0
@@ -391,20 +496,30 @@ export async function importVideoFromSource(
         INSERT INTO videos (
           uri,
           filename,
+          thumbnail_uri,
           playlist_id,
           episode_num,
           progress,
           duration,
-          is_pinned
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          is_pinned,
+          external_id,
+          remote_url,
+          download_status,
+          download_progress
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       targetUri,
       originalFilename,
+      thumbnailUri,
       resolvedPlaylistId,
       parsed.episodeNumber,
       0,
       0,
-      0
+      0,
+      null,
+      null,
+      'downloaded',
+      1
     );
   });
 }
@@ -453,10 +568,12 @@ export async function getPlaylistsWithCounts(db: SQLiteDatabase) {
       p.name,
       p.icon,
       p.is_pinned,
-      COUNT(v.id) AS videoCount
+      SUM(CASE WHEN COALESCE(v.uri, '') != '' THEN 1 ELSE 0 END) AS videoCount,
+      MAX(CASE WHEN COALESCE(v.uri, '') != '' THEN v.thumbnail_uri ELSE NULL END) AS thumbnailUri
     FROM playlists p
     LEFT JOIN videos v ON v.playlist_id = p.id
     GROUP BY p.id, p.name, p.icon, p.is_pinned
+    HAVING SUM(CASE WHEN COALESCE(v.uri, '') != '' THEN 1 ELSE 0 END) > 0 OR COUNT(v.id) = 0
     ORDER BY p.is_pinned DESC, p.name COLLATE NOCASE ASC
   `);
 
@@ -464,6 +581,7 @@ export async function getPlaylistsWithCounts(db: SQLiteDatabase) {
     ...row,
     is_pinned: toNumber(row.is_pinned, 0),
     videoCount: toNumber(row.videoCount, 0),
+    thumbnailUri: toNullableString(row.thumbnailUri),
   }));
 }
 
@@ -521,9 +639,23 @@ export async function getAllPlaylists(db: SQLiteDatabase) {
 export async function getVideosByPlaylist(db: SQLiteDatabase, playlistId: number) {
   const rows = await db.getAllAsync<VideoRow>(
     `
-      SELECT id, uri, filename, playlist_id, episode_num, progress, duration, is_pinned
+      SELECT
+        id,
+        uri,
+        filename,
+        thumbnail_uri,
+        playlist_id,
+        episode_num,
+        progress,
+        duration,
+        is_pinned,
+        external_id,
+        remote_url,
+        download_status,
+        download_progress
       FROM videos
       WHERE playlist_id = ?
+        AND COALESCE(uri, '') != ''
       ORDER BY
         is_pinned DESC,
         CASE WHEN episode_num IS NULL THEN 1 ELSE 0 END,
@@ -535,18 +667,37 @@ export async function getVideosByPlaylist(db: SQLiteDatabase, playlistId: number
 
   return rows.map((row) => ({
     ...row,
+    thumbnail_uri: toNullableString(row.thumbnail_uri),
     playlist_id: toNumber(row.playlist_id),
     episode_num: toNullableEpisode(row.episode_num),
     progress: toNumber(row.progress, 0),
     duration: toNumber(row.duration, 0),
     is_pinned: toNumber(row.is_pinned, 0),
+    external_id: toNullableString(row.external_id),
+    remote_url: toNullableString(row.remote_url),
+    download_status: toDownloadStatus(row.download_status),
+    download_progress: toNumber(row.download_progress, 0),
   }));
 }
 
 export async function getAllVideos(db: SQLiteDatabase) {
   const rows = await db.getAllAsync<VideoRow>(`
-    SELECT id, uri, filename, playlist_id, episode_num, progress, duration, is_pinned
+    SELECT
+      id,
+      uri,
+      filename,
+      thumbnail_uri,
+      playlist_id,
+      episode_num,
+      progress,
+      duration,
+      is_pinned,
+      external_id,
+      remote_url,
+      download_status,
+      download_progress
     FROM videos
+    WHERE COALESCE(uri, '') != ''
     ORDER BY
       is_pinned DESC,
       CASE WHEN episode_num IS NULL THEN 1 ELSE 0 END,
@@ -556,18 +707,36 @@ export async function getAllVideos(db: SQLiteDatabase) {
 
   return rows.map((row) => ({
     ...row,
+    thumbnail_uri: toNullableString(row.thumbnail_uri),
     playlist_id: toNumber(row.playlist_id),
     episode_num: toNullableEpisode(row.episode_num),
     progress: toNumber(row.progress, 0),
     duration: toNumber(row.duration, 0),
     is_pinned: toNumber(row.is_pinned, 0),
+    external_id: toNullableString(row.external_id),
+    remote_url: toNullableString(row.remote_url),
+    download_status: toDownloadStatus(row.download_status),
+    download_progress: toNumber(row.download_progress, 0),
   }));
 }
 
 export async function getVideoById(db: SQLiteDatabase, videoId: number) {
   const row = await db.getFirstAsync<VideoRow>(
     `
-      SELECT id, uri, filename, playlist_id, episode_num, progress, duration, is_pinned
+      SELECT
+        id,
+        uri,
+        filename,
+        thumbnail_uri,
+        playlist_id,
+        episode_num,
+        progress,
+        duration,
+        is_pinned,
+        external_id,
+        remote_url,
+        download_status,
+        download_progress
       FROM videos
       WHERE id = ?
     `,
@@ -580,12 +749,103 @@ export async function getVideoById(db: SQLiteDatabase, videoId: number) {
 
   return {
     ...row,
+    thumbnail_uri: toNullableString(row.thumbnail_uri),
     playlist_id: toNumber(row.playlist_id),
     episode_num: toNullableEpisode(row.episode_num),
     progress: toNumber(row.progress, 0),
     duration: toNumber(row.duration, 0),
     is_pinned: toNumber(row.is_pinned, 0),
+    external_id: toNullableString(row.external_id),
+    remote_url: toNullableString(row.remote_url),
+    download_status: toDownloadStatus(row.download_status),
+    download_progress: toNumber(row.download_progress, 0),
   };
+}
+
+export async function getVideoByExternalId(db: SQLiteDatabase, externalId: string) {
+  const row = await db.getFirstAsync<VideoRow>(
+    `
+      SELECT
+        id,
+        uri,
+        filename,
+        thumbnail_uri,
+        playlist_id,
+        episode_num,
+        progress,
+        duration,
+        is_pinned,
+        external_id,
+        remote_url,
+        download_status,
+        download_progress
+      FROM videos
+      WHERE external_id = ?
+    `,
+    externalId
+  );
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    ...row,
+    thumbnail_uri: toNullableString(row.thumbnail_uri),
+    playlist_id: toNumber(row.playlist_id),
+    episode_num: toNullableEpisode(row.episode_num),
+    progress: toNumber(row.progress, 0),
+    duration: toNumber(row.duration, 0),
+    is_pinned: toNumber(row.is_pinned, 0),
+    external_id: toNullableString(row.external_id),
+    remote_url: toNullableString(row.remote_url),
+    download_status: toDownloadStatus(row.download_status),
+    download_progress: toNumber(row.download_progress, 0),
+  };
+}
+
+export async function getVideosByExternalIds(db: SQLiteDatabase, externalIds: string[]) {
+  const filteredIds = [...new Set(externalIds.filter(Boolean))];
+  if (filteredIds.length === 0) {
+    return [] as VideoRow[];
+  }
+
+  const placeholders = filteredIds.map(() => '?').join(', ');
+  const rows = await db.getAllAsync<VideoRow>(
+    `
+      SELECT
+        id,
+        uri,
+        filename,
+        thumbnail_uri,
+        playlist_id,
+        episode_num,
+        progress,
+        duration,
+        is_pinned,
+        external_id,
+        remote_url,
+        download_status,
+        download_progress
+      FROM videos
+      WHERE external_id IN (${placeholders})
+    `,
+    ...filteredIds
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    thumbnail_uri: toNullableString(row.thumbnail_uri),
+    playlist_id: toNumber(row.playlist_id),
+    episode_num: toNullableEpisode(row.episode_num),
+    progress: toNumber(row.progress, 0),
+    duration: toNumber(row.duration, 0),
+    is_pinned: toNumber(row.is_pinned, 0),
+    external_id: toNullableString(row.external_id),
+    remote_url: toNullableString(row.remote_url),
+    download_status: toDownloadStatus(row.download_status),
+    download_progress: toNumber(row.download_progress, 0),
+  }));
 }
 
 export async function updateVideoProgress(
@@ -600,6 +860,172 @@ export async function updateVideoProgress(
     duration,
     videoId
   );
+}
+
+export async function upsertRemoteEpisode(
+  db: SQLiteDatabase,
+  payload: {
+    externalId: string;
+    remoteUrl: string;
+    seriesTitle: string;
+    filename: string;
+    episodeNumber?: number | null;
+    thumbnailUri?: string | null;
+    playlistIcon?: string;
+  }
+) {
+  const existing = await getVideoByExternalId(db, payload.externalId);
+  const playlistId = await getOrCreatePlaylistId(
+    db,
+    payload.seriesTitle,
+    payload.playlistIcon?.trim() || DEFAULT_PLAYLIST_ICON
+  );
+
+  if (existing) {
+    await db.runAsync(
+      `
+        UPDATE videos
+        SET
+          filename = ?,
+          thumbnail_uri = COALESCE(?, thumbnail_uri),
+          playlist_id = ?,
+          episode_num = ?,
+          remote_url = ?,
+          download_status = CASE
+            WHEN download_status = 'downloaded' THEN download_status
+            ELSE 'available'
+          END
+        WHERE id = ?
+      `,
+      payload.filename,
+      payload.thumbnailUri ?? null,
+      playlistId,
+      payload.episodeNumber ?? null,
+      payload.remoteUrl,
+      existing.id
+    );
+
+    return (await getVideoById(db, existing.id)) as VideoRow;
+  }
+
+  const result = await db.runAsync(
+    `
+      INSERT INTO videos (
+        uri,
+        filename,
+        thumbnail_uri,
+        playlist_id,
+        episode_num,
+        progress,
+        duration,
+        is_pinned,
+        external_id,
+        remote_url,
+        download_status,
+        download_progress
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    '',
+    payload.filename,
+    payload.thumbnailUri ?? null,
+    playlistId,
+    payload.episodeNumber ?? null,
+    0,
+    0,
+    0,
+    payload.externalId,
+    payload.remoteUrl,
+    'available',
+    0
+  );
+
+  return (await getVideoById(db, result.lastInsertRowId)) as VideoRow;
+}
+
+export async function updateVideoDownloadState(
+  db: SQLiteDatabase,
+  videoId: number,
+  values: {
+    uri?: string | null;
+    remoteUrl?: string | null;
+    downloadStatus?: string;
+    downloadProgress?: number;
+    duration?: number;
+    thumbnailUri?: string | null;
+  }
+) {
+  await db.runAsync(
+    `
+      UPDATE videos
+      SET
+        uri = COALESCE(?, uri),
+        remote_url = COALESCE(?, remote_url),
+        download_status = COALESCE(?, download_status),
+        download_progress = COALESCE(?, download_progress),
+        duration = COALESCE(?, duration),
+        thumbnail_uri = COALESCE(?, thumbnail_uri)
+      WHERE id = ?
+    `,
+    values.uri ?? null,
+    values.remoteUrl ?? null,
+    values.downloadStatus ?? null,
+    values.downloadProgress ?? null,
+    values.duration ?? null,
+    values.thumbnailUri ?? null,
+    videoId
+  );
+}
+
+export async function getDownloadRows(db: SQLiteDatabase) {
+  const rows = await db.getAllAsync<DownloadRow>(`
+    SELECT
+      v.id,
+      v.uri,
+      v.filename,
+      v.thumbnail_uri,
+      v.playlist_id,
+      v.episode_num,
+      v.progress,
+      v.duration,
+      v.is_pinned,
+      v.external_id,
+      v.remote_url,
+      v.download_status,
+      v.download_progress,
+      p.name AS playlist_name,
+      p.icon AS playlist_icon
+    FROM videos v
+    INNER JOIN playlists p ON p.id = v.playlist_id
+    WHERE v.remote_url IS NOT NULL OR v.download_status != 'none'
+    ORDER BY
+      CASE v.download_status
+        WHEN 'downloading' THEN 0
+        WHEN 'queued' THEN 1
+        WHEN 'downloaded' THEN 2
+        ELSE 3
+      END,
+      v.is_pinned DESC,
+      p.name COLLATE NOCASE ASC,
+      CASE WHEN v.episode_num IS NULL THEN 1 ELSE 0 END,
+      v.episode_num ASC,
+      v.filename COLLATE NOCASE ASC
+  `);
+
+  return rows.map((row) => ({
+    ...row,
+    thumbnail_uri: toNullableString(row.thumbnail_uri),
+    playlist_id: toNumber(row.playlist_id),
+    episode_num: toNullableEpisode(row.episode_num),
+    progress: toNumber(row.progress, 0),
+    duration: toNumber(row.duration, 0),
+    is_pinned: toNumber(row.is_pinned, 0),
+    external_id: toNullableString(row.external_id),
+    remote_url: toNullableString(row.remote_url),
+    download_status: toDownloadStatus(row.download_status),
+    download_progress: toNumber(row.download_progress, 0),
+    playlist_name: row.playlist_name,
+    playlist_icon: row.playlist_icon,
+  }));
 }
 
 export async function renamePlaylist(
@@ -692,6 +1118,13 @@ export async function deleteVideoById(
       await FileSystem.deleteAsync(row.uri, { idempotent: true });
     }
   }
+
+  if (row.thumbnail_uri) {
+    const info = await FileSystem.getInfoAsync(row.thumbnail_uri);
+    if (info.exists) {
+      await FileSystem.deleteAsync(row.thumbnail_uri, { idempotent: true });
+    }
+  }
 }
 
 export async function deletePlaylistById(
@@ -707,12 +1140,25 @@ export async function deletePlaylistById(
 
   for (const video of videos) {
     if (!video.uri) {
+      if (video.thumbnail_uri) {
+        const thumbnailInfo = await FileSystem.getInfoAsync(video.thumbnail_uri);
+        if (thumbnailInfo.exists) {
+          await FileSystem.deleteAsync(video.thumbnail_uri, { idempotent: true });
+        }
+      }
       continue;
     }
 
     const info = await FileSystem.getInfoAsync(video.uri);
     if (info.exists) {
       await FileSystem.deleteAsync(video.uri, { idempotent: true });
+    }
+
+    if (video.thumbnail_uri) {
+      const thumbnailInfo = await FileSystem.getInfoAsync(video.thumbnail_uri);
+      if (thumbnailInfo.exists) {
+        await FileSystem.deleteAsync(video.thumbnail_uri, { idempotent: true });
+      }
     }
   }
 }
@@ -747,5 +1193,34 @@ export async function setSettingBoolean(
     `,
     key,
     String(value)
+  );
+}
+
+export async function getSettingString(
+  db: SQLiteDatabase,
+  key: string,
+  fallback: string
+) {
+  const row = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM settings WHERE key = ?',
+    key
+  );
+
+  return row?.value ?? fallback;
+}
+
+export async function setSettingString(
+  db: SQLiteDatabase,
+  key: string,
+  value: string
+) {
+  await db.runAsync(
+    `
+      INSERT INTO settings (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `,
+    key,
+    value
   );
 }

@@ -1,33 +1,36 @@
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
-import { LIQUID_COLORS } from '@/src/theme/liquid';
+import { useApp } from '@/src/providers/app-provider';
 
 export default function NotFoundScreen() {
+  const { t } = useTranslation();
+  const { theme } = useApp();
+
   return (
     <LiquidBackground>
-      <SafeAreaView style={styles.safeArea}>
+      <View style={styles.root}>
         <GlassCard style={styles.card}>
-          <Text style={styles.title}>Сторінку не знайдено</Text>
-          <Text style={styles.copy}>Поверніться до бібліотеки та відкрийте коректне відео.</Text>
+          <Text style={[styles.title, { color: theme.textPrimary }]}>404</Text>
+          <Text style={[styles.copy, { color: theme.textSecondary }]}>{t('common.empty')}</Text>
           <Pressable
             onPress={() => {
-              router.replace('/library');
+              router.replace('/local');
             }}
-            style={styles.button}>
-            <Text style={styles.buttonLabel}>До бібліотеки</Text>
+            style={[styles.button, { backgroundColor: theme.surfaceStrong }]}>
+            <Text style={[styles.buttonLabel, { color: theme.textPrimary }]}>{t('tabs.local')}</Text>
           </Pressable>
         </GlassCard>
-      </SafeAreaView>
+      </View>
     </LiquidBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  root: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -35,34 +38,29 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 360,
     padding: 24,
-    gap: 12,
+    alignItems: 'center',
   },
   title: {
-    color: LIQUID_COLORS.textPrimary,
-    fontSize: 28,
+    fontSize: 40,
     fontWeight: '800',
-    textAlign: 'center',
   },
   copy: {
-    color: LIQUID_COLORS.textSecondary,
+    marginTop: 10,
     fontSize: 14,
-    lineHeight: 21,
+    lineHeight: 20,
     textAlign: 'center',
   },
   button: {
-    marginTop: 8,
-    alignSelf: 'center',
-    borderRadius: 999,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
+    marginTop: 16,
+    minHeight: 46,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   buttonLabel: {
-    color: LIQUID_COLORS.textPrimary,
     fontSize: 14,
     fontWeight: '800',
   },

@@ -1,72 +1,127 @@
+import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Switch, Text, View } from 'react-native';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
+import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
+import { useTranslation } from 'react-i18next';
 
 import { GlassCard } from '@/src/components/ui/glass-card';
+import { GlassPressable } from '@/src/components/ui/glass-pressable';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
+import { SUPPORTED_LANGUAGES } from '@/src/i18n';
 import { useApp } from '@/src/providers/app-provider';
-import { LIQUID_COLORS } from '@/src/theme/liquid';
+import { THEME_PRESET_OPTIONS } from '@/src/theme/liquid';
+
+type SheetMode = 'language' | 'theme' | null;
 
 function SettingRow({
-  label,
+  title,
   description,
-  value,
-  onValueChange,
+  children,
 }: {
-  label: string;
+  title: string;
   description: string;
-  value: boolean;
-  onValueChange: (value: boolean) => void;
+  children: ReactNode;
 }) {
+  const { theme } = useApp();
+
   return (
     <GlassCard style={styles.rowCard}>
       <View style={styles.rowCopy}>
-        <Text style={styles.rowTitle}>{label}</Text>
-        <Text style={styles.rowDescription}>{description}</Text>
+        <Text style={[styles.rowTitle, { color: theme.textPrimary }]}>{title}</Text>
+        <Text style={[styles.rowDescription, { color: theme.textSecondary }]}>{description}</Text>
       </View>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: 'rgba(255,255,255,0.16)', true: 'rgba(196,181,253,0.5)' }}
-        thumbColor={value ? '#FFFFFF' : '#E2E8F0'}
-      />
+      {children}
     </GlassCard>
   );
 }
 
 export default function SettingsTabScreen() {
+  const { t } = useTranslation();
   const {
-    autoDeleteWatchedEpisodes,
+    theme,
+    ready,
+    language,
     darkModeEnabled,
-    preferencesLoading,
-    setAutoDeleteWatchedEpisodes,
+    autoDeleteWatchedEpisodes,
+    themePreset,
+    setLanguage,
     setDarkModeEnabled,
+    setAutoDeleteWatchedEpisodes,
+    setThemePreset,
   } = useApp();
+  const [sheetMode, setSheetMode] = useState<SheetMode>(null);
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const updateSetting = useCallback(
-    async (nextValue: boolean, setter: (value: boolean) => Promise<void>) => {
-      setSaving(true);
-      setError(null);
-
-      try {
-        await setter(nextValue);
-      } catch {
-        setError('Не вдалося зберегти налаштування.');
-      } finally {
-        setSaving(false);
-      }
-    },
-    []
+  const currentLanguage = useMemo(
+    () => SUPPORTED_LANGUAGES.find((item) => item.code === language) ?? SUPPORTED_LANGUAGES[1],
+    [language]
+  );
+  const currentThemePreset = useMemo(
+    () => THEME_PRESET_OPTIONS.find((item) => item.id === themePreset) ?? THEME_PRESET_OPTIONS[0],
+    [themePreset]
+  );
+  const currentThemeLabel = useMemo(
+    () => t(`themes.${currentThemePreset.id}`, { defaultValue: currentThemePreset.label }),
+    [currentThemePreset.id, currentThemePreset.label, t]
   );
 
-  if (preferencesLoading) {
+  const runAsyncSetting = useCallback(async (callback: () => Promise<void>) => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      await callback();
+    } catch {
+      setError(t('settings.saving'));
+    } finally {
+      setSaving(false);
+    }
+  }, [t]);
+
+  const handleClearCache = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      if (FileSystem.cacheDirectory) {
+        const entries = await FileSystem.readDirectoryAsync(FileSystem.cacheDirectory);
+
+        for (const entry of entries) {
+          await FileSystem.deleteAsync(`${FileSystem.cacheDirectory}${entry}`, {
+            idempotent: true,
+          });
+        }
+      }
+
+      setMessage(t('settings.clearCacheDone'));
+    } catch {
+      setError(t('settings.clearCacheError'));
+    } finally {
+      setSaving(false);
+    }
+  }, [t]);
+
+  if (!ready) {
     return (
       <LiquidBackground>
         <View style={styles.centerState}>
-          <ActivityIndicator size="large" color={LIQUID_COLORS.textPrimary} />
-          <Text style={styles.loadingText}>Завантажую налаштування</Text>
+          <ActivityIndicator size="large" color={theme.textPrimary} />
+          <Text style={[styles.loadingText, { color: theme.textPrimary }]}>{t('common.loading')}</Text>
         </View>
       </LiquidBackground>
     );
@@ -74,128 +129,291 @@ export default function SettingsTabScreen() {
 
   return (
     <LiquidBackground>
-      <View style={styles.header}>
-        <Image source={require('../../assets/images/icon.png')} style={styles.appIcon} contentFit="cover" />
-        <Text style={styles.eyebrow}>Параметри</Text>
-        <Text style={styles.title}>Налаштування</Text>
-        <Text style={styles.subtitle}>
-          Ці перемикачі зберігаються в таблиці `settings` у SQLite і відновлюються після перезапуску застосунку.
-        </Text>
-      </View>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Animated.View entering={FadeInDown.duration(420)} style={styles.header}>
+          <Image source={require('../../assets/images/icon.png')} style={styles.appIcon} contentFit="cover" />
+          <Text style={[styles.eyebrow, { color: theme.textMuted }]}>{t('settings.eyebrow')}</Text>
+          <Text style={[styles.title, { color: theme.textPrimary }]}>{t('settings.title')}</Text>
+          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{t('settings.subtitle')}</Text>
+        </Animated.View>
 
-      {error ? (
-        <GlassCard style={styles.messageCard}>
-          <Text style={styles.errorText}>{error}</Text>
-        </GlassCard>
-      ) : null}
+        {error ? (
+          <GlassCard style={styles.messageCard}>
+            <Text style={[styles.messageText, { color: theme.danger }]}>{error}</Text>
+          </GlassCard>
+        ) : null}
 
-      <View style={styles.content}>
-        <SettingRow
-          label="Авто-видалення переглянутих серій"
-          description="Після завершення відео файл автоматично видаляється з диска та з SQLite."
-          value={autoDeleteWatchedEpisodes}
-          onValueChange={(value) => {
-            void updateSetting(value, setAutoDeleteWatchedEpisodes);
-          }}
-        />
+        {message ? (
+          <GlassCard style={styles.messageCard}>
+            <Text style={[styles.messageText, { color: theme.success }]}>{message}</Text>
+          </GlassCard>
+        ) : null}
 
-        <SettingRow
-          label="Темна тема"
-          description="Змінює глобальний фон і стиль скляних карток по всьому застосунку."
-          value={darkModeEnabled}
-          onValueChange={(value) => {
-            void updateSetting(value, setDarkModeEnabled);
-          }}
-        />
+        <Animated.View layout={LinearTransition.springify()} style={styles.section}>
+          <SettingRow
+            title={t('settings.autoDelete')}
+            description={t('settings.autoDeleteCopy')}>
+            <Switch
+              value={autoDeleteWatchedEpisodes}
+              onValueChange={(value) => {
+                void runAsyncSetting(async () => {
+                  await setAutoDeleteWatchedEpisodes(value);
+                });
+              }}
+              trackColor={{ false: theme.surfaceMuted, true: `${theme.accentPrimary}66` }}
+              thumbColor={autoDeleteWatchedEpisodes ? '#FFFFFF' : '#E5E7EB'}
+            />
+          </SettingRow>
 
-        <GlassCard style={styles.noteCard}>
-          <Text style={styles.noteTitle}>Статус</Text>
-          <Text style={styles.noteCopy}>
-            Авто-видалення: {autoDeleteWatchedEpisodes ? 'увімкнено' : 'вимкнено'} • Темна тема:{' '}
-            {darkModeEnabled ? 'увімкнено' : 'вимкнено'}
+          <SettingRow title={t('settings.darkMode')} description={t('settings.darkModeCopy')}>
+            <Switch
+              value={darkModeEnabled}
+              onValueChange={(value) => {
+                void runAsyncSetting(async () => {
+                  await setDarkModeEnabled(value);
+                });
+              }}
+              trackColor={{ false: theme.surfaceMuted, true: `${theme.accentSecondary}66` }}
+              thumbColor={darkModeEnabled ? '#FFFFFF' : '#E5E7EB'}
+            />
+          </SettingRow>
+        </Animated.View>
+
+        <Animated.View layout={LinearTransition.springify()} style={styles.section}>
+          <GlassPressable
+            onPress={() => {
+              setSheetMode('language');
+            }}
+            contentStyle={styles.selectionRow}>
+            <View style={styles.rowCopy}>
+              <Text style={[styles.rowTitle, { color: theme.textPrimary }]}>{t('settings.language')}</Text>
+              <Text style={[styles.rowDescription, { color: theme.textSecondary }]}>{t('settings.languageCopy')}</Text>
+            </View>
+            <View style={styles.selectionValue}>
+              <Text style={[styles.selectionLabel, { color: theme.textPrimary }]}>{currentLanguage.nativeLabel}</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.textMuted} />
+            </View>
+          </GlassPressable>
+
+          <GlassPressable
+            onPress={() => {
+              setSheetMode('theme');
+            }}
+            contentStyle={styles.selectionRow}>
+            <View style={styles.rowCopy}>
+              <Text style={[styles.rowTitle, { color: theme.textPrimary }]}>{t('settings.theme')}</Text>
+              <Text style={[styles.rowDescription, { color: theme.textSecondary }]}>{t('settings.themeCopy')}</Text>
+            </View>
+            <View style={styles.selectionValue}>
+              <Text style={[styles.selectionLabel, { color: theme.textPrimary }]}>{currentThemeLabel}</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.textMuted} />
+            </View>
+          </GlassPressable>
+
+          <GlassPressable
+            onPress={() => {
+              void handleClearCache();
+            }}
+            contentStyle={styles.selectionRow}>
+            <View style={styles.rowCopy}>
+              <Text style={[styles.rowTitle, { color: theme.textPrimary }]}>{t('settings.clearCache')}</Text>
+              <Text style={[styles.rowDescription, { color: theme.textSecondary }]}>{t('settings.clearCacheCopy')}</Text>
+            </View>
+            {saving ? (
+              <ActivityIndicator size="small" color={theme.textPrimary} />
+            ) : (
+              <Ionicons name="trash-outline" size={18} color={theme.textPrimary} />
+            )}
+          </GlassPressable>
+        </Animated.View>
+
+        <GlassCard style={styles.statusCard}>
+          <Text style={[styles.statusTitle, { color: theme.textPrimary }]}>{t('settings.status')}</Text>
+          <Text style={[styles.statusCopy, { color: theme.textSecondary }]}>
+            {currentLanguage.nativeLabel} • {currentThemeLabel} •{' '}
+            {darkModeEnabled ? t('settings.modeDark') : t('settings.modeSoft')}
           </Text>
           {saving ? (
             <View style={styles.savingRow}>
-              <ActivityIndicator size="small" color={LIQUID_COLORS.textPrimary} />
-              <Text style={styles.savingText}>Зберігаю зміни</Text>
+              <ActivityIndicator size="small" color={theme.textPrimary} />
+              <Text style={[styles.savingLabel, { color: theme.textPrimary }]}>{t('settings.saving')}</Text>
             </View>
           ) : null}
         </GlassCard>
-      </View>
+      </ScrollView>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={sheetMode !== null}
+        onRequestClose={() => {
+          setSheetMode(null);
+        }}>
+        <View style={styles.sheetBackdrop}>
+          <Animated.View entering={FadeInDown.springify()} style={styles.sheetWrap}>
+            <GlassCard style={styles.sheetCard}>
+              <Text style={[styles.sheetTitle, { color: theme.textPrimary }]}>
+                {sheetMode === 'language' ? t('settings.languageSheetTitle') : t('settings.themeSheetTitle')}
+              </Text>
+
+              {sheetMode === 'language'
+                ? SUPPORTED_LANGUAGES.map((item) => {
+                    const active = item.code === language;
+
+                    return (
+                      <Pressable
+                        key={item.code}
+                        onPress={() => {
+                          void runAsyncSetting(async () => {
+                            await setLanguage(item.code);
+                            setSheetMode(null);
+                          });
+                        }}
+                        style={[
+                          styles.sheetOption,
+                          {
+                            backgroundColor: active ? theme.surfaceStrong : theme.surfaceMuted,
+                            borderColor: active ? theme.accentPrimary : theme.separator,
+                          },
+                        ]}>
+                        <View>
+                          <Text style={[styles.sheetOptionTitle, { color: theme.textPrimary }]}>{item.nativeLabel}</Text>
+                          <Text style={[styles.sheetOptionMeta, { color: theme.textSecondary }]}>{item.label}</Text>
+                        </View>
+                        {active ? <Ionicons name="checkmark-circle" size={20} color={theme.accentPrimary} /> : null}
+                      </Pressable>
+                    );
+                  })
+                : THEME_PRESET_OPTIONS.map((item) => {
+                    const active = item.id === themePreset;
+
+                    return (
+                      <Pressable
+                        key={item.id}
+                        onPress={() => {
+                          void runAsyncSetting(async () => {
+                            await setThemePreset(item.id);
+                            setSheetMode(null);
+                          });
+                        }}
+                        style={[
+                          styles.sheetOption,
+                          {
+                            backgroundColor: active ? theme.surfaceStrong : theme.surfaceMuted,
+                            borderColor: active ? theme.accentPrimary : theme.separator,
+                          },
+                        ]}>
+                        <Text style={[styles.sheetOptionTitle, { color: theme.textPrimary }]}>
+                          {t(`themes.${item.id}`, { defaultValue: item.label })}
+                        </Text>
+                        {active ? <Ionicons name="checkmark-circle" size={20} color={theme.accentPrimary} /> : null}
+                      </Pressable>
+                    );
+                  })}
+
+              <Pressable
+                onPress={() => {
+                  setSheetMode(null);
+                }}
+                style={[styles.sheetCloseButton, { backgroundColor: theme.surfaceStrong }]}>
+                <Text style={[styles.sheetCloseLabel, { color: theme.textPrimary }]}>{t('common.close')}</Text>
+              </Pressable>
+            </GlassCard>
+          </Animated.View>
+        </View>
+      </Modal>
     </LiquidBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
+  content: {
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 18,
+    paddingBottom: 120,
+  },
+  header: {
+    marginBottom: 20,
   },
   appIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    marginBottom: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    marginBottom: 14,
   },
   eyebrow: {
-    color: LIQUID_COLORS.textMuted,
     fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.1,
+    fontWeight: '800',
+    letterSpacing: 1.4,
     textTransform: 'uppercase',
   },
   title: {
     marginTop: 8,
-    color: LIQUID_COLORS.textPrimary,
     fontSize: 34,
     fontWeight: '800',
     lineHeight: 38,
   },
   subtitle: {
-    marginTop: 8,
-    color: LIQUID_COLORS.textSecondary,
+    marginTop: 10,
     fontSize: 14,
     lineHeight: 20,
-    maxWidth: 290,
+    maxWidth: 300,
   },
-  content: {
-    paddingHorizontal: 20,
-    gap: 14,
+  messageCard: {
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  messageText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  section: {
+    gap: 12,
+    marginBottom: 16,
   },
   rowCard: {
     padding: 18,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 14,
+    gap: 12,
   },
   rowCopy: {
     flex: 1,
     gap: 6,
   },
   rowTitle: {
-    color: LIQUID_COLORS.textPrimary,
     fontSize: 16,
     fontWeight: '800',
   },
   rowDescription: {
-    color: LIQUID_COLORS.textSecondary,
     fontSize: 13,
     lineHeight: 18,
   },
-  noteCard: {
+  selectionRow: {
+    minHeight: 84,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  selectionValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  selectionLabel: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  statusCard: {
     padding: 18,
     gap: 8,
   },
-  noteTitle: {
-    color: LIQUID_COLORS.textPrimary,
+  statusTitle: {
     fontSize: 16,
     fontWeight: '800',
   },
-  noteCopy: {
-    color: LIQUID_COLORS.textSecondary,
+  statusCopy: {
     fontSize: 13,
     lineHeight: 18,
   },
@@ -203,10 +421,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 2,
+    marginTop: 4,
   },
-  savingText: {
-    color: LIQUID_COLORS.textPrimary,
+  savingLabel: {
     fontSize: 13,
     fontWeight: '700',
   },
@@ -217,19 +434,56 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   loadingText: {
-    color: LIQUID_COLORS.textPrimary,
     fontSize: 16,
     fontWeight: '700',
   },
-  messageCard: {
-    marginHorizontal: 20,
-    marginBottom: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+  sheetBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(4, 7, 18, 0.56)',
   },
-  errorText: {
-    color: LIQUID_COLORS.danger,
+  sheetWrap: {
+    padding: 20,
+    paddingBottom: 32,
+  },
+  sheetCard: {
+    padding: 18,
+    gap: 12,
+  },
+  sheetTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  sheetOption: {
+    minHeight: 58,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sheetOptionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  sheetOptionMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sheetCloseButton: {
+    marginTop: 8,
+    minHeight: 46,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetCloseLabel: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
 });

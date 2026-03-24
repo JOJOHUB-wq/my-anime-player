@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "My Anime Player",
+    "name": "Atherium Player",
     "slug": "my-anime-player",
     "version": "1.0.0",
     "orientation": "default",
@@ -12,11 +12,14 @@
       "supportsTablet": false,
       "infoPlist": {
         "UIBackgroundModes": [
-          "audio",
           "audio"
         ],
         "NSPhotoLibraryUsageDescription": "The app scans your video albums to build a personal library.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleAllowMixedLocalizations": true,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       },
       "bundleIdentifier": "com.jonatanjostar.myanimeplayer"
     },
@@ -28,11 +31,17 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.jonatanjostar.myanimeplayer",
+      "usesCleartextTraffic": true
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "headers": {
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Opener-Policy": "same-origin"
+      }
     },
     "plugins": [
       "expo-router",
@@ -63,7 +72,8 @@
           "supportsPictureInPicture": true
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-secure-store"
     ],
     "experiments": {
       "reactCompiler": true
