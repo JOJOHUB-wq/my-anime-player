@@ -62,8 +62,8 @@ const PLAYLIST_ICON_OPTIONS = [
 const VIDEO_FILE_RE = /\.(?:mkv|mp4|m4v|mov|avi|webm)$/i;
 const PRIMARY_TEXT = '#FFFFFF';
 const SECONDARY_TEXT = '#A0A0A0';
-const GLASS_BG = 'rgba(10, 14, 28, 0.42)';
-const GLASS_BORDER = 'rgba(255,255,255,0.1)';
+const GLASS_BG = 'rgba(11, 16, 30, 0.42)';
+const GLASS_BORDER = 'rgba(255, 255, 255, 0.15)';
 const GLASS_SOFT = 'rgba(255,255,255,0.08)';
 
 function isVideoFilename(name: string) {
@@ -115,7 +115,7 @@ function PremiumActionCard({
 }) {
   return (
     <Pressable onPress={onPress} style={[styles.actionPressable, large && styles.actionPressableLarge]}>
-      <BlurView intensity={30} tint="dark" style={[styles.actionCard, large && styles.actionCardLarge]}>
+      <BlurView intensity={72} tint="dark" style={[styles.actionCard, large && styles.actionCardLarge]}>
         <LinearGradient
           colors={[`${accent}28`, 'rgba(255,255,255,0.01)']}
           start={{ x: 0, y: 0 }}
@@ -152,7 +152,7 @@ function PlaylistCard({
       layout={LinearTransition.springify().damping(18).stiffness(180)}
       style={styles.playlistShell}>
       <Pressable onPress={onPress}>
-        <BlurView intensity={30} tint="dark" style={styles.playlistCard}>
+        <BlurView intensity={72} tint="dark" style={styles.playlistCard}>
           <View style={styles.playlistArtwork}>
             {item.thumbnailUri ? (
               <Image source={{ uri: item.thumbnailUri }} style={styles.playlistThumbnail} contentFit="cover" />
@@ -691,7 +691,7 @@ export default function LocalTabScreen() {
                     </Pressable>
                   </View>
 
-                  <BlurView intensity={30} tint="dark" style={styles.heroPanel}>
+                  <BlurView intensity={72} tint="dark" style={styles.heroPanel}>
                     <LinearGradient
                       colors={['rgba(56, 189, 248, 0.18)', 'rgba(124, 58, 237, 0.12)', 'rgba(2, 6, 23, 0.02)']}
                       style={StyleSheet.absoluteFill}
@@ -755,13 +755,13 @@ export default function LocalTabScreen() {
                 </Animated.View>
 
                 {error ? (
-                  <BlurView intensity={30} tint="dark" style={styles.noticeCard}>
+                  <BlurView intensity={72} tint="dark" style={styles.noticeCard}>
                     <Text style={styles.noticeError}>{error}</Text>
                   </BlurView>
                 ) : null}
 
                 {message ? (
-                  <BlurView intensity={30} tint="dark" style={styles.noticeCard}>
+                  <BlurView intensity={72} tint="dark" style={styles.noticeCard}>
                     <Text style={styles.noticeSuccess}>{message}</Text>
                   </BlurView>
                 ) : null}
@@ -771,7 +771,7 @@ export default function LocalTabScreen() {
             }
             ListEmptyComponent={
               <View style={styles.emptyStateWrap}>
-                <BlurView intensity={30} tint="dark" style={styles.emptyCard}>
+                <BlurView intensity={72} tint="dark" style={styles.emptyCard}>
                   <Ionicons name="add-circle-outline" size={30} color={PRIMARY_TEXT} />
                   <Text style={styles.emptyTitle}>{t('local.emptyTitle')}</Text>
                   <Text style={styles.emptyCopy}>{t('local.emptyImportPrompt')}</Text>
@@ -1112,6 +1112,10 @@ const styles = StyleSheet.create({
     borderColor: GLASS_BORDER,
     overflow: 'hidden',
     backgroundColor: GLASS_BG,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   heroPanelRow: {
     flexDirection: 'row',
@@ -1188,6 +1192,10 @@ const styles = StyleSheet.create({
     borderColor: GLASS_BORDER,
     overflow: 'hidden',
     backgroundColor: GLASS_BG,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   actionCardLarge: {
     minHeight: 108,
@@ -1221,6 +1229,10 @@ const styles = StyleSheet.create({
     borderColor: GLASS_BORDER,
     overflow: 'hidden',
     backgroundColor: GLASS_BG,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   noticeError: {
     color: '#FF8FA3',
@@ -1271,6 +1283,10 @@ const styles = StyleSheet.create({
     borderColor: GLASS_BORDER,
     overflow: 'hidden',
     backgroundColor: GLASS_BG,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   playlistArtwork: {
     position: 'relative',
@@ -1395,6 +1411,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: GLASS_BG,
     alignItems: 'center',
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   emptyStateWrap: {
     flex: 1,

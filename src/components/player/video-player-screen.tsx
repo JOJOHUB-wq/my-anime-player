@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -43,10 +44,25 @@ function KodikWebViewPlayer({
 }: Pick<VideoPlayerScreenProps, 'media' | 'title' | 'subtitle' | 'onClose'>) {
   const { theme } = useApp();
   const { t } = useTranslation();
+  const [isClosing, setIsClosing] = useState(false);
+
+  useEffect(() => {
+    if (!isClosing) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      void onClose();
+    }, 60);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [isClosing, onClose]);
 
   return (
     <View style={styles.root}>
-      <KodikPlayerSurface uri={normalizeUrl(media.uri)} />
+      <KodikPlayerSurface uri={normalizeUrl(media.uri)} active={!isClosing} />
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
         <BlurView
@@ -61,7 +77,7 @@ function KodikWebViewPlayer({
           ]}>
           <Pressable
             onPress={() => {
-              void onClose();
+              setIsClosing(true);
             }}
             style={[styles.iconButton, { backgroundColor: theme.surfaceMuted }]}>
             <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />

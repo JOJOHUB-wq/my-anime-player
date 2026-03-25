@@ -20,6 +20,9 @@ import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
 import { fetchTrendingCatalog, searchCatalog, type CatalogAnime } from '@/src/services/online-catalog';
 
+const LIQUID_GLASS_BG = 'rgba(11, 16, 30, 0.42)';
+const LIQUID_GLASS_BORDER = 'rgba(255, 255, 255, 0.15)';
+
 function CatalogCard({
   item,
   index,
@@ -39,9 +42,9 @@ function CatalogCard({
       style={styles.cardShell}>
       <Pressable onPress={onPress}>
         <BlurView
-          intensity={30}
+          intensity={72}
           tint="dark"
-          style={[styles.card, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+          style={[styles.card, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
           <View style={styles.posterShell}>
             {item.posterUrl ? (
               <Image source={{ uri: item.posterUrl }} style={styles.poster} contentFit="cover" />
@@ -184,6 +187,7 @@ export default function DiscoverTabScreen() {
         data={items}
         renderItem={renderItem}
         keyExtractor={(item) => String(item.id)}
+        style={styles.list}
         numColumns={2}
         columnWrapperStyle={styles.gridRow}
         contentContainerStyle={styles.content}
@@ -196,9 +200,9 @@ export default function DiscoverTabScreen() {
         ListHeaderComponent={
           <View style={styles.header}>
             <BlurView
-              intensity={30}
+              intensity={72}
               tint="dark"
-              style={[styles.heroCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+              style={[styles.heroCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
               <Image
                 source={require('../../assets/images/icon.png')}
                 style={styles.heroIcon}
@@ -226,9 +230,9 @@ export default function DiscoverTabScreen() {
 
             <View style={styles.searchWrap}>
               <BlurView
-                intensity={30}
+                intensity={72}
                 tint="dark"
-                style={[styles.searchCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+                style={[styles.searchCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
                 <Ionicons name="search-outline" size={18} color={theme.textSecondary} />
                 <TextInput
                   value={query}
@@ -266,7 +270,7 @@ export default function DiscoverTabScreen() {
               </BlurView>
 
               {showSuggestions ? (
-                <View style={styles.searchDropdown}>
+                <BlurView intensity={72} tint="dark" style={styles.searchDropdown}>
                   <FlatList
                     data={suggestions}
                     keyExtractor={(item) => `suggestion-${item.id}`}
@@ -306,15 +310,15 @@ export default function DiscoverTabScreen() {
                       </Pressable>
                     )}
                   />
-                </View>
+                </BlurView>
               ) : null}
             </View>
 
             {error ? (
               <BlurView
-                intensity={30}
+                intensity={72}
                 tint="dark"
-                style={[styles.noticeCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+                style={[styles.noticeCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
                 <Ionicons name="warning-outline" size={18} color={theme.warning} />
                 <Text style={[styles.noticeText, { color: theme.textSecondary }]}>{error}</Text>
               </BlurView>
@@ -323,9 +327,9 @@ export default function DiscoverTabScreen() {
         }
         ListEmptyComponent={
           <BlurView
-            intensity={30}
+            intensity={72}
             tint="dark"
-            style={[styles.emptyCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+            style={[styles.emptyCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
             <Ionicons name="film-outline" size={28} color={theme.textPrimary} />
             <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>{t('discover.emptyTitle')}</Text>
             <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
@@ -357,6 +361,8 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 20,
     gap: 14,
+    zIndex: 9999,
+    elevation: 10,
   },
   heroCard: {
     borderWidth: 1,
@@ -366,6 +372,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   heroIcon: {
     width: 64,
@@ -399,7 +409,8 @@ const styles = StyleSheet.create({
   },
   searchWrap: {
     position: 'relative',
-    zIndex: 1,
+    zIndex: 9999,
+    elevation: 10,
   },
   searchCard: {
     minHeight: 58,
@@ -409,6 +420,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  list: {
+    zIndex: -1,
+    elevation: 1,
   },
   searchDropdown: {
     position: 'absolute',
@@ -416,11 +435,15 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     elevation: 10,
     width: '100%',
-    backgroundColor: 'rgba(20,20,25,0.95)',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: LIQUID_GLASS_BORDER,
     overflow: 'hidden',
+    backgroundColor: LIQUID_GLASS_BG,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   suggestionRow: {
     minHeight: 60,
@@ -470,6 +493,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   noticeText: {
     flex: 1,
@@ -500,6 +527,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   posterShell: {
     position: 'relative',
@@ -548,6 +579,10 @@ const styles = StyleSheet.create({
     padding: 24,
     alignItems: 'center',
     gap: 10,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   emptyTitle: {
     fontSize: 18,

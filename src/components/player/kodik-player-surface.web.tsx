@@ -8,7 +8,7 @@ const iframeStyle: CSSProperties = {
   backgroundColor: '#000000',
 };
 
-export function KodikPlayerSurface({ uri }: { uri: string }) {
+export function KodikPlayerSurface({ uri }: { uri: string; active?: boolean }) {
   return (
     <View style={styles.root}>
       <iframe

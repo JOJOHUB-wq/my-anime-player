@@ -9,7 +9,11 @@ import {
 import i18n from '@/src/i18n';
 
 const YOUTUBE_DOWNLOAD_DIRECTORY = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? ''}youtube-imports/`;
-const MEDIA_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL || 'http://217.60.245.84:3000/api';
+const MEDIA_BACKEND_BASE_URL =
+  process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL ||
+  (FileSystem.documentDirectory
+    ? 'http://217.60.245.84:3000/api'
+    : 'https://217-60-245-84.sslip.io/api/media');
 
 type DownloadSource = {
   url: string;

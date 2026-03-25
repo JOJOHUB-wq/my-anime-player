@@ -7,7 +7,7 @@ import { useApp } from '@/src/providers/app-provider';
 export function GlassCard({
   children,
   style,
-  intensity = 58,
+  intensity = 72,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -23,8 +23,8 @@ export function GlassCard({
         styles.card,
         {
           backgroundColor: theme.cardBackground,
-          borderColor: theme.cardBorder,
-          shadowColor: '#000000',
+          borderColor: 'rgba(255, 255, 255, 0.15)',
+          shadowColor: '#FFFFFF',
         },
         style,
       ]}>
@@ -38,11 +38,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     overflow: 'hidden',
-    shadowOpacity: 0.2,
-    shadowRadius: 24,
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
     shadowOffset: {
       width: 0,
-      height: 16,
+      height: 6,
     },
     elevation: 0,
   },

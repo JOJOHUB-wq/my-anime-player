@@ -27,11 +27,178 @@ import {
   type KodikSeason,
   type KodikTranslation,
 } from '@/src/services/online-catalog';
+import {
+  buildStreamProxyUrl,
+  resolveStreamingCatalog,
+  resolveStreamingCatalogByAnimeId,
+  type StreamingResolution,
+  type StreamingSource,
+} from '@/src/services/stream-provider';
+
+const LIQUID_GLASS_BG = 'rgba(11, 16, 30, 0.42)';
+const LIQUID_GLASS_BORDER = 'rgba(255, 255, 255, 0.15)';
 
 function resolveIdParam(value?: string | string[]) {
   const raw = Array.isArray(value) ? value[0] : value;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function normalizeLabel(value?: string | null, fallback = 'Original') {
+  const normalized = String(value ?? '').trim();
+  return normalized || fallback;
+}
+
+function sortDubTitles(left: string, right: string) {
+  return left.localeCompare(right, undefined, { sensitivity: 'base' });
+}
+
+function pickBestSource(sources: StreamingSource[]) {
+  const normalizedSources = [...sources].sort((left, right) => {
+    const leftLabel = normalizeLabel(left.label, left.dub).toLowerCase();
+    const rightLabel = normalizeLabel(right.label, right.dub).toLowerCase();
+
+    if (leftLabel.includes('1080') && !rightLabel.includes('1080')) {
+      return -1;
+    }
+
+    if (!leftLabel.includes('1080') && rightLabel.includes('1080')) {
+      return 1;
+    }
+
+    if (leftLabel.includes('720') && !rightLabel.includes('720')) {
+      return -1;
+    }
+
+    if (!leftLabel.includes('720') && rightLabel.includes('720')) {
+      return 1;
+    }
+
+    return 0;
+  });
+
+  return normalizedSources[0] ?? null;
+}
+
+function mapStreamResolutionToTranslations(
+  resolution: StreamingResolution,
+  options: {
+    posterUrl: string | null;
+    originalDubLabel: string;
+    seasonLabelPrefix: string;
+    episodeLabelPrefix: string;
+  }
+) {
+  const translations = new Map<string, KodikTranslation>();
+
+  for (const season of resolution.seasons) {
+    const episodesByDub = new Map<
+      string,
+      {
+        link: string | null;
+        episodes: KodikEpisode[];
+      }
+    >();
+
+    for (const episode of season.episodes) {
+      const sourcesByDub = new Map<string, StreamingSource[]>();
+
+      for (const source of episode.sources) {
+        const dubTitle = normalizeLabel(source.dub || source.label, options.originalDubLabel);
+        const current = sourcesByDub.get(dubTitle) ?? [];
+        current.push(source);
+        sourcesByDub.set(dubTitle, current);
+      }
+
+      for (const [dubTitle, sources] of sourcesByDub.entries()) {
+        const bestSource = pickBestSource(sources);
+        if (!bestSource?.url) {
+          continue;
+        }
+
+        const proxiedUrl = buildStreamProxyUrl(bestSource.url, bestSource.headers);
+        const current = episodesByDub.get(dubTitle) ?? {
+          link: proxiedUrl,
+          episodes: [],
+        };
+
+        if (!current.episodes.some((item) => item.number === episode.number)) {
+          current.episodes.push({
+            id: `${season.id}-${dubTitle}-${episode.id}`,
+            number: episode.number,
+            title: episode.title || `${options.episodeLabelPrefix} ${episode.number}`,
+            link: proxiedUrl,
+            screenshot: episode.image,
+          });
+        }
+
+        if (!current.link) {
+          current.link = proxiedUrl;
+        }
+
+        episodesByDub.set(dubTitle, current);
+      }
+    }
+
+    for (const [dubTitle, seasonData] of episodesByDub.entries()) {
+      const translationKey = dubTitle.toLowerCase();
+      const existing = translations.get(translationKey);
+      const nextSeason: KodikSeason = {
+        id: season.id,
+        label: season.title || `${options.seasonLabelPrefix} 1`,
+        link: seasonData.link,
+        episodes: [...seasonData.episodes].sort((left, right) => left.number - right.number),
+      };
+
+      if (!existing) {
+        translations.set(translationKey, {
+          id: translationKey,
+          title: dubTitle,
+          type: season.provider || 'stream',
+          posterUrl: season.image || options.posterUrl,
+          playerLink: seasonData.link,
+          seasons: [nextSeason],
+        });
+        continue;
+      }
+
+      const mergedSeasons = new Map(existing.seasons.map((item) => [item.id, item]));
+      const currentSeason = mergedSeasons.get(nextSeason.id);
+
+      if (!currentSeason) {
+        mergedSeasons.set(nextSeason.id, nextSeason);
+      } else {
+        const mergedEpisodes = new Map(currentSeason.episodes.map((item) => [item.number, item]));
+        for (const item of nextSeason.episodes) {
+          if (!mergedEpisodes.has(item.number)) {
+            mergedEpisodes.set(item.number, item);
+          }
+        }
+
+        mergedSeasons.set(nextSeason.id, {
+          ...currentSeason,
+          link: currentSeason.link ?? nextSeason.link,
+          episodes: [...mergedEpisodes.values()].sort((left, right) => left.number - right.number),
+        });
+      }
+
+      translations.set(translationKey, {
+        ...existing,
+        posterUrl: existing.posterUrl ?? season.image ?? options.posterUrl,
+        playerLink: existing.playerLink ?? seasonData.link,
+        seasons: [...mergedSeasons.values()],
+      });
+    }
+  }
+
+  return [...translations.values()]
+    .map((translation) => ({
+      ...translation,
+      seasons: [...translation.seasons].sort((left, right) =>
+        left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: 'base' })
+      ),
+    }))
+    .sort((left, right) => sortDubTitles(left.title, right.title));
 }
 
 function MetadataChip({
@@ -96,9 +263,9 @@ function EpisodeTile({
       style={styles.episodeTileWrap}>
       <Pressable onPress={onPress}>
         <BlurView
-          intensity={30}
+          intensity={72}
           tint="dark"
-          style={[styles.episodeTile, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+          style={[styles.episodeTile, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
           <View style={[styles.episodeNumberBadge, { backgroundColor: theme.surfaceStrong }]}>
             <Text style={[styles.episodeNumberText, { color: theme.textPrimary }]}>{item.number}</Text>
           </View>
@@ -142,15 +309,46 @@ export default function OnlineAnimeDetailScreen() {
       setDetail(nextDetail);
 
       try {
-        const nextTranslations = await fetchKodikTranslations(
-          animeId,
-          nextDetail.title || nextDetail.originalTitle
-        );
+        let streamResolution = await resolveStreamingCatalogByAnimeId(animeId);
+        if (streamResolution.seasons.length === 0) {
+          streamResolution = await resolveStreamingCatalog({
+            title: nextDetail.title || nextDetail.originalTitle,
+            alternativeTitles: [nextDetail.originalTitle, nextDetail.title],
+          });
+        }
 
-        setTranslations(nextTranslations);
-        setSelectedDubId(nextTranslations[0]?.id ?? null);
-        setSelectedSeasonId(nextTranslations[0]?.seasons[0]?.id ?? null);
-      } catch {
+        const streamTranslations = mapStreamResolutionToTranslations(streamResolution, {
+          posterUrl: nextDetail.posterUrl,
+          originalDubLabel: t('online.dubs.original'),
+          seasonLabelPrefix: t('online.seasonLabel'),
+          episodeLabelPrefix: t('online.episodeLabelPrefix'),
+        });
+
+        if (streamTranslations.length > 0) {
+          setTranslations(streamTranslations);
+          setSelectedDubId(streamTranslations[0]?.id ?? null);
+          setSelectedSeasonId(streamTranslations[0]?.seasons[0]?.id ?? null);
+          return;
+        }
+      } catch (streamError) {
+        console.warn('Primary stream provider unavailable, falling back to Kodik:', streamError);
+      }
+
+      try {
+        const nextTranslations = await fetchKodikTranslations(animeId, nextDetail.title || nextDetail.originalTitle);
+
+        if (nextTranslations.length > 0) {
+          setTranslations(nextTranslations);
+          setSelectedDubId(nextTranslations[0]?.id ?? null);
+          setSelectedSeasonId(nextTranslations[0]?.seasons[0]?.id ?? null);
+          return;
+        }
+
+        setTranslations([]);
+        setSelectedDubId(null);
+        setSelectedSeasonId(null);
+      } catch (kodikError) {
+        console.error('Kodik fallback failed:', kodikError);
         setTranslations([]);
         setSelectedDubId(null);
         setSelectedSeasonId(null);
@@ -236,9 +434,9 @@ export default function OnlineAnimeDetailScreen() {
       <LiquidBackground>
         <View style={styles.loadingState}>
           <BlurView
-            intensity={30}
+            intensity={72}
             tint="dark"
-            style={[styles.noticeCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+            style={[styles.noticeCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
             <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>{t('online.loadTitleError')}</Text>
             <Text style={[styles.noticeBody, { color: theme.textSecondary }]}>
               {error ?? t('online.loadTitleErrorCopy')}
@@ -261,9 +459,13 @@ export default function OnlineAnimeDetailScreen() {
       <FlatList
         data={activeSeason?.episodes ?? []}
         renderItem={renderEpisode}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         numColumns={episodeColumns}
         key={`episodes-${episodeColumns}-${activeSeason?.id ?? 'empty'}`}
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews
         columnWrapperStyle={episodeColumns > 1 ? styles.episodeGridRow : undefined}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -279,12 +481,12 @@ export default function OnlineAnimeDetailScreen() {
             </Pressable>
 
             <BlurView
-              intensity={30}
+              intensity={72}
               tint="dark"
               style={[
                 styles.heroCard,
                 wideLayout && styles.heroCardWide,
-                { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground },
+                { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG },
               ]}>
               {detail.posterUrl ? (
                 <Image
@@ -376,9 +578,9 @@ export default function OnlineAnimeDetailScreen() {
         }
         ListEmptyComponent={
           <BlurView
-            intensity={30}
+            intensity={72}
             tint="dark"
-            style={[styles.noticeCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+            style={[styles.noticeCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
             <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>{t('online.emptyEpisodesTitle')}</Text>
             <Text style={[styles.noticeBody, { color: theme.textSecondary }]}>
               {t('online.emptyEpisodesCopy')}
@@ -430,6 +632,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     padding: 18,
     gap: 18,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   heroCardWide: {
     flexDirection: 'row',
@@ -553,6 +759,10 @@ const styles = StyleSheet.create({
     padding: 10,
     alignItems: 'center',
     justifyContent: 'space-between',
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   episodeNumberBadge: {
     width: 34,
@@ -575,6 +785,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 22,
     gap: 10,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   noticeTitle: {
     fontSize: 18,
