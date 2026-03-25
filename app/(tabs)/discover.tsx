@@ -10,13 +10,14 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
-import { fetchTrendingCatalog, type CatalogAnime } from '@/src/services/online-catalog';
+import { fetchTrendingCatalog, searchCatalog, type CatalogAnime } from '@/src/services/online-catalog';
 
 function CatalogCard({
   item,
@@ -71,17 +72,21 @@ function CatalogCard({
 export default function DiscoverTabScreen() {
   const { theme } = useApp();
   const [items, setItems] = useState<CatalogAnime[]>([]);
+  const [query, setQuery] = useState('');
+  const [activeQuery, setActiveQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadCatalog = useCallback(async () => {
+  const loadCatalog = useCallback(async (nextQuery?: string) => {
+    const trimmedQuery = (nextQuery ?? activeQuery).trim();
     setError(null);
     setRefreshing(true);
 
     try {
-      const nextItems = await fetchTrendingCatalog();
+      const nextItems = trimmedQuery ? await searchCatalog(trimmedQuery) : await fetchTrendingCatalog();
       setItems(nextItems);
+      setActiveQuery(trimmedQuery);
     } catch {
       setError('Не удалось загрузить каталог.');
       setItems([]);
@@ -89,7 +94,7 @@ export default function DiscoverTabScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [activeQuery]);
 
   useEffect(() => {
     void loadCatalog();
@@ -164,6 +169,44 @@ export default function DiscoverTabScreen() {
                   <Ionicons name="refresh" size={18} color={theme.textPrimary} />
                 )}
               </Pressable>
+            </BlurView>
+
+            <BlurView
+              intensity={40}
+              tint="dark"
+              style={[styles.searchCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+              <Ionicons name="search-outline" size={18} color={theme.textSecondary} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                onSubmitEditing={() => {
+                  void loadCatalog(query);
+                }}
+                placeholder="Поиск аниме..."
+                placeholderTextColor={theme.textMuted}
+                returnKeyType="search"
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[styles.searchInput, { color: theme.textPrimary }]}
+              />
+              {query ? (
+                <Pressable
+                  onPress={() => {
+                    setQuery('');
+                    void loadCatalog('');
+                  }}
+                  style={[styles.searchAction, { backgroundColor: theme.surfaceStrong }]}>
+                  <Ionicons name="close" size={16} color={theme.textPrimary} />
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => {
+                    void loadCatalog(query);
+                  }}
+                  style={[styles.searchAction, { backgroundColor: theme.surfaceStrong }]}>
+                  <Ionicons name="arrow-forward" size={16} color={theme.textPrimary} />
+                </Pressable>
+              )}
             </BlurView>
 
             {error ? (
@@ -267,6 +310,28 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     lineHeight: 20,
+  },
+  searchCard: {
+    minHeight: 58,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    paddingVertical: 0,
+  },
+  searchAction: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   gridRow: {
     gap: 14,
