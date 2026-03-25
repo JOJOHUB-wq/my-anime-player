@@ -12,12 +12,63 @@ const youtubedl = require('youtube-dl-exec');
 
 const PORT = Number(process.env.PORT || 3000);
 const KODIK_TOKEN = process.env.KODIK_TOKEN || '8b72506e7c10b6510834316dcb989601';
+const KODIK_TIMEOUT_MS = Number(process.env.KODIK_TIMEOUT_MS || 25000);
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const KODIK_MIRROR_BASES = [
-  'https://kodikapi.com/search',
-  'https://kodik.biz/search',
-  'https://kodik.info/search',
+const KODIK_MIRRORS = [
+  {
+    name: 'kodikapi',
+    searchUrl: 'https://kodikapi.com/search',
+    origin: 'https://kodikapi.com',
+  },
+  {
+    name: 'kodik-info',
+    searchUrl: 'https://kodik.info/search',
+    origin: 'https://kodik.info',
+  },
+  {
+    name: 'kodik-biz',
+    searchUrl: 'https://kodik.biz/search',
+    origin: 'https://kodik.biz',
+  },
+];
+const KODIK_HEADER_PROFILES = [
+  {
+    name: 'chrome',
+    accept: 'application/json, text/plain, */*',
+    acceptLanguage: 'uk-UA,uk;q=0.9,ru;q=0.8,en-US;q=0.7,en;q=0.6',
+  },
+  {
+    name: 'fallback',
+    accept: 'text/plain,application/json;q=0.9,*/*;q=0.8',
+    acceptLanguage: 'ru-RU,ru;q=0.9,uk-UA;q=0.8,en-US;q=0.7,en;q=0.6',
+  },
+];
+const KODIK_PROXY_FALLBACKS = [
+  {
+    name: 'allorigins',
+    buildRequest(targetUrl) {
+      return {
+        url: 'https://api.allorigins.win/raw',
+        params: {
+          url: targetUrl,
+        },
+        origin: 'https://api.allorigins.win',
+      };
+    },
+  },
+  {
+    name: 'codetabs',
+    buildRequest(targetUrl) {
+      return {
+        url: 'https://api.codetabs.com/v1/proxy',
+        params: {
+          quest: targetUrl,
+        },
+        origin: 'https://api.codetabs.com',
+      };
+    },
+  },
 ];
 const dnsResolver = new dns.Resolver();
 dnsResolver.setServers(['1.1.1.1', '8.8.8.8']);
@@ -32,8 +83,15 @@ const io = new Server(server, {
 });
 
 const httpClient = axios.create({
-  timeout: 15000,
+  timeout: KODIK_TIMEOUT_MS,
+  maxRedirects: 5,
+  responseType: 'text',
+  transformResponse: [(data) => data],
+  httpAgent: new http.Agent({
+    keepAlive: true,
+  }),
   httpsAgent: new https.Agent({
+    keepAlive: true,
     lookup(hostname, options, callback) {
       dnsResolver.resolve4(hostname, (error, addresses) => {
         if (!error && addresses && addresses.length > 0) {
@@ -47,9 +105,7 @@ const httpClient = axios.create({
   }),
   headers: {
     'User-Agent': USER_AGENT,
-    Accept: 'application/json, text/javascript, */*; q=0.01',
-    Referer: 'https://kodik.info/',
-    Origin: 'https://kodik.info',
+    Accept: 'application/json, text/plain, */*',
   },
 });
 
@@ -77,17 +133,23 @@ function pickFirstPlayableUrl(output) {
 }
 
 function serializeAxiosError(error) {
-  if (error.response) {
+  const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+  const response = error && typeof error === 'object' ? error.response : null;
+
+  if (response) {
     return {
-      message: error.message,
-      status: error.response.status,
-      data: error.response.data,
-      headers: error.response.headers,
+      message,
+      status: response.status,
+      data:
+        typeof response.data === 'string'
+          ? response.data.slice(0, 500)
+          : response.data,
+      headers: response.headers,
     };
   }
 
   return {
-    message: error.message,
+    message,
   };
 }
 
@@ -102,14 +164,117 @@ function classifyKodikFailure(serializedError) {
 
   if (
     message.includes('timeout') ||
+    message.includes('aborted') ||
+    message.includes('econnreset') ||
+    message.includes('enotfound') ||
     status >= 500 ||
+    status === 429 ||
     data.includes('error 520') ||
+    data.includes('error 521') ||
+    data.includes('error 522') ||
+    data.includes('error 524') ||
     data.includes('cloudflare')
   ) {
     return 'KODIK_TIMEOUT';
   }
 
   return 'KODIK_BLOCKED';
+}
+
+function parseKodikPayload(data) {
+  if (isKodikPayload(data)) {
+    return data;
+  }
+
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      if (isKodikPayload(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function normalizeKodikQueryParams(query) {
+  return Object.fromEntries(
+    Object.entries(query || {})
+      .map(([key, value]) => {
+        const normalizedValue = Array.isArray(value) ? value[0] : value;
+        return [key, String(normalizedValue ?? '').trim()];
+      })
+      .filter(([, value]) => value.length > 0)
+  );
+}
+
+function buildKodikHeaders(origin, profile) {
+  const { host } = new URL(origin);
+
+  return {
+    'User-Agent': USER_AGENT,
+    Accept: profile.accept,
+    'Accept-Language': profile.acceptLanguage,
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+    DNT: '1',
+    Referer: `${origin}/`,
+    Origin: origin,
+    Host: host,
+    Connection: 'keep-alive',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-site',
+    'Sec-CH-UA': '"Chromium";v="120", "Not_A Brand";v="24", "Google Chrome";v="120"',
+    'Sec-CH-UA-Mobile': '?0',
+    'Sec-CH-UA-Platform': '"Windows"',
+  };
+}
+
+async function executeKodikRequest(candidate) {
+  const response = await httpClient.get(candidate.url, {
+    params: candidate.params,
+    headers: buildKodikHeaders(candidate.origin, candidate.profile),
+    timeout: candidate.timeoutMs,
+  });
+
+  const payload = parseKodikPayload(response.data);
+  if (!payload) {
+    throw new Error(`Unexpected Kodik payload from ${candidate.label}`);
+  }
+
+  return payload;
+}
+
+async function runKodikStage(stageName, candidates) {
+  const failures = [];
+
+  try {
+    return await Promise.any(
+      candidates.map(async (candidate) => {
+        try {
+          return await executeKodikRequest(candidate);
+        } catch (error) {
+          const serialized = serializeAxiosError(error);
+          failures.push({
+            stage: stageName,
+            label: candidate.label,
+            serialized,
+          });
+          console.error(`Kodik ${stageName} failed: ${candidate.label}`, serialized);
+          throw error;
+        }
+      })
+    );
+  } catch {
+    const stageError = new Error(`Kodik ${stageName} failed.`);
+    stageError.details = failures[failures.length - 1]?.serialized ?? null;
+    stageError.failures = failures;
+    throw stageError;
+  }
 }
 
 async function fetchKodikPayload(queryParams) {
@@ -121,50 +286,42 @@ async function fetchKodikPayload(queryParams) {
     ...queryParams,
   };
 
+  const serializedParams = new URLSearchParams(params).toString();
+  const directStages = KODIK_HEADER_PROFILES.map((profile) => ({
+    name: `direct-${profile.name}`,
+    candidates: KODIK_MIRRORS.map((mirror) => ({
+      label: `${mirror.name}:${profile.name}`,
+      url: mirror.searchUrl,
+      origin: mirror.origin,
+      profile,
+      params,
+      timeoutMs: KODIK_TIMEOUT_MS,
+    })),
+  }));
+  const proxyStages = KODIK_PROXY_FALLBACKS.map((fallback) => ({
+    name: `proxy-${fallback.name}`,
+    candidates: KODIK_MIRRORS.map((mirror) => {
+      const targetUrl = `${mirror.searchUrl}?${serializedParams}`;
+      const proxyRequest = fallback.buildRequest(targetUrl);
+
+      return {
+        label: `${fallback.name}:${mirror.name}`,
+        url: proxyRequest.url,
+        origin: proxyRequest.origin,
+        profile: KODIK_HEADER_PROFILES[0],
+        params: proxyRequest.params,
+        timeoutMs: KODIK_TIMEOUT_MS,
+      };
+    }),
+  }));
+
   let lastError = null;
 
-  for (const endpoint of KODIK_MIRROR_BASES) {
+  for (const stage of [...directStages, ...proxyStages]) {
     try {
-      const response = await httpClient.get(endpoint, { params });
-
-      if (!isKodikPayload(response.data)) {
-        throw new Error(`Unexpected Kodik payload from ${endpoint}`);
-      }
-
-      return response.data;
+      return await runKodikStage(stage.name, stage.candidates);
     } catch (error) {
-      const serialized = serializeAxiosError(error);
-      lastError = serialized;
-      console.error(`Kodik mirror failed: ${endpoint}`, serialized);
-    }
-  }
-
-  const fallbackTargets = KODIK_MIRROR_BASES.map(
-    (endpoint) => `${endpoint}?${new URLSearchParams(params).toString()}`
-  );
-
-  for (const fallbackUrl of fallbackTargets) {
-    try {
-      const fallbackResponse = await axios.get('https://api.allorigins.win/raw', {
-        timeout: 15000,
-        params: { url: fallbackUrl },
-        headers: {
-          'User-Agent': USER_AGENT,
-          Accept: 'application/json, text/javascript, */*; q=0.01',
-          Referer: 'https://kodik.info/',
-          Origin: 'https://kodik.info',
-        },
-      });
-
-      if (!isKodikPayload(fallbackResponse.data)) {
-        throw new Error(`Unexpected AllOrigins payload for ${fallbackUrl}`);
-      }
-
-      return fallbackResponse.data;
-    } catch (error) {
-      const serialized = serializeAxiosError(error);
-      lastError = serialized;
-      console.error(`Kodik AllOrigins fallback failed: ${fallbackUrl}`, serialized);
+      lastError = error?.details ?? serializeAxiosError(error);
     }
   }
 
@@ -183,10 +340,9 @@ app.get('/health', (_req, res) => {
 });
 
 async function handleKodikSearch(req, res) {
-  const shikimoriId = String(req.query.shikimori_id || '').trim();
-  const title = String(req.query.title || '').trim();
-  const strict = String(req.query.strict || '').trim();
-  const types = String(req.query.types || '').trim();
+  const queryParams = normalizeKodikQueryParams(req.query);
+  const shikimoriId = String(queryParams.shikimori_id || '').trim();
+  const title = String(queryParams.title || '').trim();
 
   if (!shikimoriId && !title) {
     return res.status(400).json({
@@ -196,13 +352,7 @@ async function handleKodikSearch(req, res) {
   }
 
   try {
-    const payload = await fetchKodikPayload({
-      ...(shikimoriId ? { shikimori_id: shikimoriId } : {}),
-      ...(title ? { title } : {}),
-      ...(strict ? { strict } : {}),
-      ...(types ? { types } : {}),
-    });
-
+    const payload = await fetchKodikPayload(queryParams);
     return res.json(payload);
   } catch (error) {
     const serialized = serializeAxiosError(error);

@@ -2,16 +2,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   ListRenderItemInfo,
   Pressable,
+  StyleProp,
   StyleSheet,
   Text,
   TextInput,
   View,
+  ViewStyle,
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { useTranslation } from 'react-i18next';
@@ -20,8 +22,23 @@ import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
 import { fetchTrendingCatalog, searchCatalog, type CatalogAnime } from '@/src/services/online-catalog';
 
+const GLASS_INTENSITY = 70;
 const LIQUID_GLASS_BG = 'rgba(11, 16, 30, 0.42)';
-const LIQUID_GLASS_BORDER = 'rgba(255, 255, 255, 0.15)';
+const LIQUID_GLASS_BORDER = 'rgba(255, 255, 255, 0.2)';
+
+function GlassPanel({
+  children,
+  style,
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <BlurView intensity={GLASS_INTENSITY} tint="dark" style={[styles.glassPanel, style]}>
+      {children}
+    </BlurView>
+  );
+}
 
 function CatalogCard({
   item,
@@ -41,10 +58,7 @@ function CatalogCard({
       layout={LinearTransition.springify().damping(18).stiffness(180)}
       style={styles.cardShell}>
       <Pressable onPress={onPress}>
-        <BlurView
-          intensity={72}
-          tint="dark"
-          style={[styles.card, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+        <GlassPanel style={styles.card}>
           <View style={styles.posterShell}>
             {item.posterUrl ? (
               <Image source={{ uri: item.posterUrl }} style={styles.poster} contentFit="cover" />
@@ -68,7 +82,7 @@ function CatalogCard({
               {t('discover.episodesCount', { count: item.episodesAired || item.episodes || 0 })}
             </Text>
           </View>
-        </BlurView>
+        </GlassPanel>
       </Pressable>
     </Animated.View>
   );
@@ -193,16 +207,15 @@ export default function DiscoverTabScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        removeClippedSubviews={false}
+        ListHeaderComponentStyle={styles.headerShell}
         onRefresh={() => {
           void loadCatalog();
         }}
         refreshing={refreshing}
         ListHeaderComponent={
           <View style={styles.header}>
-            <BlurView
-              intensity={72}
-              tint="dark"
-              style={[styles.heroCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+            <GlassPanel style={styles.heroCard}>
               <Image
                 source={require('../../assets/images/icon.png')}
                 style={styles.heroIcon}
@@ -226,13 +239,10 @@ export default function DiscoverTabScreen() {
                   <Ionicons name="refresh" size={18} color={theme.textPrimary} />
                 )}
               </Pressable>
-            </BlurView>
+            </GlassPanel>
 
             <View style={styles.searchWrap}>
-              <BlurView
-                intensity={72}
-                tint="dark"
-                style={[styles.searchCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+              <GlassPanel style={styles.searchCard}>
                 <Ionicons name="search-outline" size={18} color={theme.textSecondary} />
                 <TextInput
                   value={query}
@@ -267,10 +277,10 @@ export default function DiscoverTabScreen() {
                     <Ionicons name="arrow-forward" size={16} color={theme.textPrimary} />
                   </Pressable>
                 )}
-              </BlurView>
+              </GlassPanel>
 
               {showSuggestions ? (
-                <BlurView intensity={72} tint="dark" style={styles.searchDropdown}>
+                <GlassPanel style={styles.searchDropdown}>
                   <FlatList
                     data={suggestions}
                     keyExtractor={(item) => `suggestion-${item.id}`}
@@ -310,32 +320,26 @@ export default function DiscoverTabScreen() {
                       </Pressable>
                     )}
                   />
-                </BlurView>
+                </GlassPanel>
               ) : null}
             </View>
 
             {error ? (
-              <BlurView
-                intensity={72}
-                tint="dark"
-                style={[styles.noticeCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+              <GlassPanel style={styles.noticeCard}>
                 <Ionicons name="warning-outline" size={18} color={theme.warning} />
                 <Text style={[styles.noticeText, { color: theme.textSecondary }]}>{error}</Text>
-              </BlurView>
+              </GlassPanel>
             ) : null}
           </View>
         }
         ListEmptyComponent={
-          <BlurView
-            intensity={72}
-            tint="dark"
-            style={[styles.emptyCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+          <GlassPanel style={styles.emptyCard}>
             <Ionicons name="film-outline" size={28} color={theme.textPrimary} />
             <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>{t('discover.emptyTitle')}</Text>
             <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
               {t('discover.emptyCopy')}
             </Text>
-          </BlurView>
+          </GlassPanel>
         }
       />
     </LiquidBackground>
@@ -347,6 +351,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 120,
+    overflow: 'visible',
+  },
+  glassPanel: {
+    borderWidth: 1,
+    borderColor: LIQUID_GLASS_BORDER,
+    borderRadius: 16,
+    backgroundColor: LIQUID_GLASS_BG,
+    overflow: 'hidden',
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   loadingState: {
     flex: 1,
@@ -363,19 +379,18 @@ const styles = StyleSheet.create({
     gap: 14,
     zIndex: 9999,
     elevation: 10,
+    overflow: 'visible',
+  },
+  headerShell: {
+    zIndex: 9999,
+    elevation: 10,
+    overflow: 'visible',
   },
   heroCard: {
-    borderWidth: 1,
-    borderRadius: 16,
     padding: 18,
-    overflow: 'hidden',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
   },
   heroIcon: {
     width: 64,
@@ -411,39 +426,26 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 9999,
     elevation: 10,
+    overflow: 'visible',
   },
   searchCard: {
     minHeight: 58,
-    borderWidth: 1,
-    borderRadius: 16,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
   },
   list: {
     zIndex: -1,
-    elevation: 1,
+    elevation: 0,
+    overflow: 'visible',
   },
   searchDropdown: {
     position: 'absolute',
-    top: 60,
+    top: 64,
     zIndex: 9999,
     elevation: 10,
     width: '100%',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: LIQUID_GLASS_BORDER,
-    overflow: 'hidden',
-    backgroundColor: LIQUID_GLASS_BG,
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
   },
   suggestionRow: {
     minHeight: 60,
@@ -519,19 +521,13 @@ const styles = StyleSheet.create({
   gridRow: {
     gap: 14,
     marginBottom: 14,
+    zIndex: -1,
   },
   cardShell: {
     flex: 1,
+    zIndex: -1,
   },
-  card: {
-    borderRadius: 16,
-    borderWidth: 1,
-    overflow: 'hidden',
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-  },
+  card: {},
   posterShell: {
     position: 'relative',
   },
@@ -574,15 +570,9 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     marginTop: 40,
-    borderWidth: 1,
-    borderRadius: 16,
     padding: 24,
     alignItems: 'center',
     gap: 10,
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
   },
   emptyTitle: {
     fontSize: 18,

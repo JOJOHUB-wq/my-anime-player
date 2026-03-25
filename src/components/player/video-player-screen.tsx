@@ -24,6 +24,8 @@ type VideoPlayerScreenProps = {
   onFinished?: () => Promise<void> | void;
 };
 
+const KODIK_CLOSE_DELAY_MS = 180;
+
 function normalizeUrl(uri: string) {
   if (uri.startsWith('//')) {
     return `https:${uri}`;
@@ -53,7 +55,7 @@ function KodikWebViewPlayer({
 
     const timeoutId = setTimeout(() => {
       void onClose();
-    }, 60);
+    }, KODIK_CLOSE_DELAY_MS);
 
     return () => {
       clearTimeout(timeoutId);

@@ -2,22 +2,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   ListRenderItemInfo,
   Pressable,
   ScrollView,
+  StyleProp,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
+  ViewStyle,
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { useTranslation } from 'react-i18next';
 
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
+import i18n from '@/src/i18n';
 import { useApp } from '@/src/providers/app-provider';
 import {
   fetchAnimeDetail,
@@ -35,8 +38,9 @@ import {
   type StreamingSource,
 } from '@/src/services/stream-provider';
 
+const GLASS_INTENSITY = 70;
 const LIQUID_GLASS_BG = 'rgba(11, 16, 30, 0.42)';
-const LIQUID_GLASS_BORDER = 'rgba(255, 255, 255, 0.15)';
+const LIQUID_GLASS_BORDER = 'rgba(255, 255, 255, 0.2)';
 
 function resolveIdParam(value?: string | string[]) {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -44,13 +48,27 @@ function resolveIdParam(value?: string | string[]) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function normalizeLabel(value?: string | null, fallback = 'Original') {
+function normalizeLabel(value?: string | null, fallback = i18n.t('online.dubs.original')) {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
 }
 
 function sortDubTitles(left: string, right: string) {
   return left.localeCompare(right, undefined, { sensitivity: 'base' });
+}
+
+function GlassPanel({
+  children,
+  style,
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <BlurView intensity={GLASS_INTENSITY} tint="dark" style={[styles.glassPanel, style]}>
+      {children}
+    </BlurView>
+  );
 }
 
 function pickBestSource(sources: StreamingSource[]) {
@@ -201,6 +219,96 @@ function mapStreamResolutionToTranslations(
     .sort((left, right) => sortDubTitles(left.title, right.title));
 }
 
+function normalizeTranslationKey(translation: Pick<KodikTranslation, 'id' | 'title'>) {
+  const normalizedTitle = normalizeLabel(translation.title, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return normalizedTitle || translation.id;
+}
+
+function normalizeSeasonKey(season: Pick<KodikSeason, 'id' | 'label'>) {
+  return (
+    String(season.label || '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim() || season.id
+  );
+}
+
+function sortSeasonCollection(seasons: KodikSeason[]) {
+  return [...seasons].sort((left, right) =>
+    left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: 'base' })
+  );
+}
+
+function mergeTranslationCollections(...collections: KodikTranslation[][]) {
+  const mergedTranslations = new Map<string, KodikTranslation>();
+
+  for (const translation of collections.flat()) {
+    const key = normalizeTranslationKey(translation);
+    const existing = mergedTranslations.get(key);
+    const nextSeasons = sortSeasonCollection(translation.seasons);
+
+    if (!existing) {
+      mergedTranslations.set(key, {
+        ...translation,
+        playerLink: translation.playerLink ?? nextSeasons[0]?.link ?? null,
+        seasons: nextSeasons,
+      });
+      continue;
+    }
+
+    const mergedSeasons = new Map(existing.seasons.map((season) => [normalizeSeasonKey(season), season]));
+
+    for (const season of nextSeasons) {
+      const seasonKey = normalizeSeasonKey(season);
+      const currentSeason = mergedSeasons.get(seasonKey);
+
+      if (!currentSeason) {
+        mergedSeasons.set(seasonKey, season);
+        continue;
+      }
+
+      const mergedEpisodes = new Map(currentSeason.episodes.map((episode) => [episode.number, episode]));
+      for (const episode of season.episodes) {
+        const currentEpisode = mergedEpisodes.get(episode.number);
+
+        if (!currentEpisode) {
+          mergedEpisodes.set(episode.number, episode);
+          continue;
+        }
+
+        mergedEpisodes.set(episode.number, {
+          ...currentEpisode,
+          title: currentEpisode.title || episode.title,
+          link: currentEpisode.link ?? episode.link,
+          screenshot: currentEpisode.screenshot ?? episode.screenshot,
+        });
+      }
+
+      mergedSeasons.set(seasonKey, {
+        ...currentSeason,
+        label: currentSeason.label || season.label,
+        link: currentSeason.link ?? season.link,
+        episodes: [...mergedEpisodes.values()].sort((left, right) => left.number - right.number),
+      });
+    }
+
+    mergedTranslations.set(key, {
+      ...existing,
+      title: existing.title || translation.title,
+      type: existing.type || translation.type,
+      posterUrl: existing.posterUrl ?? translation.posterUrl,
+      playerLink: existing.playerLink ?? translation.playerLink ?? nextSeasons[0]?.link ?? null,
+      seasons: sortSeasonCollection([...mergedSeasons.values()]),
+    });
+  }
+
+  return [...mergedTranslations.values()].sort((left, right) => sortDubTitles(left.title, right.title));
+}
+
 function MetadataChip({
   icon,
   label,
@@ -244,6 +352,23 @@ function SelectorChip({
   );
 }
 
+function GlassSectionCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  const { theme } = useApp();
+
+  return (
+    <GlassPanel style={styles.sectionCard}>
+      <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{title}</Text>
+      {children}
+    </GlassPanel>
+  );
+}
+
 function EpisodeTile({
   item,
   index,
@@ -262,10 +387,7 @@ function EpisodeTile({
       layout={LinearTransition.springify().damping(18).stiffness(180)}
       style={styles.episodeTileWrap}>
       <Pressable onPress={onPress}>
-        <BlurView
-          intensity={72}
-          tint="dark"
-          style={[styles.episodeTile, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+        <GlassPanel style={styles.episodeTile}>
           <View style={[styles.episodeNumberBadge, { backgroundColor: theme.surfaceStrong }]}>
             <Text style={[styles.episodeNumberText, { color: theme.textPrimary }]}>{item.number}</Text>
           </View>
@@ -275,7 +397,7 @@ function EpisodeTile({
           </Text>
 
           <Ionicons name="play" size={16} color={theme.accentPrimary} />
-        </BlurView>
+        </GlassPanel>
       </Pressable>
     </Animated.View>
   );
@@ -308,51 +430,50 @@ export default function OnlineAnimeDetailScreen() {
       const nextDetail = await fetchAnimeDetail(animeId);
       setDetail(nextDetail);
 
-      try {
-        let streamResolution = await resolveStreamingCatalogByAnimeId(animeId);
-        if (streamResolution.seasons.length === 0) {
-          streamResolution = await resolveStreamingCatalog({
-            title: nextDetail.title || nextDetail.originalTitle,
-            alternativeTitles: [nextDetail.originalTitle, nextDetail.title],
-          });
-        }
+      const [streamTranslations, kodikTranslations] = await Promise.all([
+        (async () => {
+          try {
+            let streamResolution = await resolveStreamingCatalogByAnimeId(animeId);
+            if (streamResolution.seasons.length === 0) {
+              streamResolution = await resolveStreamingCatalog({
+                title: nextDetail.title || nextDetail.originalTitle,
+                alternativeTitles: [nextDetail.originalTitle, nextDetail.title],
+              });
+            }
 
-        const streamTranslations = mapStreamResolutionToTranslations(streamResolution, {
-          posterUrl: nextDetail.posterUrl,
-          originalDubLabel: t('online.dubs.original'),
-          seasonLabelPrefix: t('online.seasonLabel'),
-          episodeLabelPrefix: t('online.episodeLabelPrefix'),
-        });
+            return mapStreamResolutionToTranslations(streamResolution, {
+              posterUrl: nextDetail.posterUrl,
+              originalDubLabel: t('online.dubs.original'),
+              seasonLabelPrefix: t('online.seasonLabel'),
+              episodeLabelPrefix: t('online.episodeLabelPrefix'),
+            });
+          } catch (streamError) {
+            console.warn('Primary stream provider unavailable:', streamError);
+            return [] as KodikTranslation[];
+          }
+        })(),
+        (async () => {
+          try {
+            return await fetchKodikTranslations(animeId, [nextDetail.title, nextDetail.originalTitle]);
+          } catch (kodikError) {
+            console.error('Kodik fallback failed:', kodikError);
+            return [] as KodikTranslation[];
+          }
+        })(),
+      ]);
 
-        if (streamTranslations.length > 0) {
-          setTranslations(streamTranslations);
-          setSelectedDubId(streamTranslations[0]?.id ?? null);
-          setSelectedSeasonId(streamTranslations[0]?.seasons[0]?.id ?? null);
-          return;
-        }
-      } catch (streamError) {
-        console.warn('Primary stream provider unavailable, falling back to Kodik:', streamError);
+      const mergedTranslations = mergeTranslationCollections(streamTranslations, kodikTranslations);
+
+      if (mergedTranslations.length > 0) {
+        setTranslations(mergedTranslations);
+        setSelectedDubId(mergedTranslations[0]?.id ?? null);
+        setSelectedSeasonId(mergedTranslations[0]?.seasons[0]?.id ?? null);
+        return;
       }
 
-      try {
-        const nextTranslations = await fetchKodikTranslations(animeId, nextDetail.title || nextDetail.originalTitle);
-
-        if (nextTranslations.length > 0) {
-          setTranslations(nextTranslations);
-          setSelectedDubId(nextTranslations[0]?.id ?? null);
-          setSelectedSeasonId(nextTranslations[0]?.seasons[0]?.id ?? null);
-          return;
-        }
-
-        setTranslations([]);
-        setSelectedDubId(null);
-        setSelectedSeasonId(null);
-      } catch (kodikError) {
-        console.error('Kodik fallback failed:', kodikError);
-        setTranslations([]);
-        setSelectedDubId(null);
-        setSelectedSeasonId(null);
-      }
+      setTranslations([]);
+      setSelectedDubId(null);
+      setSelectedSeasonId(null);
     } catch {
       setDetail(null);
       setTranslations([]);
@@ -433,10 +554,7 @@ export default function OnlineAnimeDetailScreen() {
     return (
       <LiquidBackground>
         <View style={styles.loadingState}>
-          <BlurView
-            intensity={72}
-            tint="dark"
-            style={[styles.noticeCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+          <GlassPanel style={styles.noticeCard}>
             <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>{t('online.loadTitleError')}</Text>
             <Text style={[styles.noticeBody, { color: theme.textSecondary }]}>
               {error ?? t('online.loadTitleErrorCopy')}
@@ -448,7 +566,7 @@ export default function OnlineAnimeDetailScreen() {
               style={[styles.noticeAction, { backgroundColor: theme.surfaceStrong }]}>
               <Text style={[styles.noticeActionLabel, { color: theme.textPrimary }]}>{t('common.back')}</Text>
             </Pressable>
-          </BlurView>
+          </GlassPanel>
         </View>
       </LiquidBackground>
     );
@@ -480,14 +598,7 @@ export default function OnlineAnimeDetailScreen() {
               <Text style={[styles.backButtonLabel, { color: theme.textPrimary }]}>{t('common.back')}</Text>
             </Pressable>
 
-            <BlurView
-              intensity={72}
-              tint="dark"
-              style={[
-                styles.heroCard,
-                wideLayout && styles.heroCardWide,
-                { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG },
-              ]}>
+            <GlassPanel style={[styles.heroCard, wideLayout && styles.heroCardWide]}>
               {detail.posterUrl ? (
                 <Image
                   source={{ uri: detail.posterUrl }}
@@ -530,10 +641,9 @@ export default function OnlineAnimeDetailScreen() {
                   </ScrollView>
                 ) : null}
               </View>
-            </BlurView>
+            </GlassPanel>
 
-            <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.dubbingTitle')}</Text>
+            <GlassSectionCard title={t('online.dubbingTitle')}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.selectorRow}>
                 {translations.map((translation) => (
                   <SelectorChip
@@ -546,11 +656,10 @@ export default function OnlineAnimeDetailScreen() {
                   />
                 ))}
               </ScrollView>
-            </View>
+            </GlassSectionCard>
 
             {activeTranslation?.seasons.length ? (
-              <View style={styles.section}>
-                <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.seasonsTitle')}</Text>
+              <GlassSectionCard title={t('online.seasonsTitle')}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.selectorRow}>
                   {activeTranslation.seasons.map((season: KodikSeason) => (
                     <SelectorChip
@@ -563,29 +672,28 @@ export default function OnlineAnimeDetailScreen() {
                     />
                   ))}
                 </ScrollView>
-              </View>
+              </GlassSectionCard>
             ) : null}
 
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.episodesTitle')}</Text>
-              <View style={[styles.counterBadge, { backgroundColor: theme.surfaceStrong }]}>
-                <Text style={[styles.counterBadgeLabel, { color: theme.textPrimary }]}>
-                  {activeSeason?.episodes.length ?? 0}
-                </Text>
+            <GlassPanel style={styles.sectionCard}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.episodesTitle')}</Text>
+                <View style={[styles.counterBadge, { backgroundColor: theme.surfaceStrong }]}>
+                  <Text style={[styles.counterBadgeLabel, { color: theme.textPrimary }]}>
+                    {activeSeason?.episodes.length ?? 0}
+                  </Text>
+                </View>
               </View>
-            </View>
+            </GlassPanel>
           </View>
         }
         ListEmptyComponent={
-          <BlurView
-            intensity={72}
-            tint="dark"
-            style={[styles.noticeCard, { borderColor: LIQUID_GLASS_BORDER, backgroundColor: LIQUID_GLASS_BG }]}>
+          <GlassPanel style={styles.noticeCard}>
             <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>{t('online.emptyEpisodesTitle')}</Text>
             <Text style={[styles.noticeBody, { color: theme.textSecondary }]}>
               {t('online.emptyEpisodesCopy')}
             </Text>
-          </BlurView>
+          </GlassPanel>
         }
       />
     </LiquidBackground>
@@ -597,6 +705,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 120,
+  },
+  glassPanel: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: LIQUID_GLASS_BORDER,
+    backgroundColor: LIQUID_GLASS_BG,
+    overflow: 'hidden',
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   loadingState: {
     flex: 1,
@@ -627,15 +746,8 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   heroCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    overflow: 'hidden',
     padding: 18,
     gap: 18,
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
   },
   heroCardWide: {
     flexDirection: 'row',
@@ -703,8 +815,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  section: {
-    gap: 10,
+  sectionCard: {
+    padding: 16,
+    gap: 12,
   },
   sectionTitle: {
     fontSize: 18,
@@ -754,15 +867,9 @@ const styles = StyleSheet.create({
   },
   episodeTile: {
     aspectRatio: 1,
-    borderRadius: 16,
-    borderWidth: 1,
     padding: 10,
     alignItems: 'center',
     justifyContent: 'space-between',
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
   },
   episodeNumberBadge: {
     width: 34,
@@ -781,14 +888,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   noticeCard: {
-    borderRadius: 16,
-    borderWidth: 1,
     padding: 22,
     gap: 10,
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
   },
   noticeTitle: {
     fontSize: 18,

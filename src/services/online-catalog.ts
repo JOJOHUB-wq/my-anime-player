@@ -7,6 +7,7 @@ const MEDIA_BACKEND_BASE_URL =
   (Platform.OS === 'web'
     ? 'https://217-60-245-84.sslip.io/api/media'
     : 'http://217.60.245.84:3000/api');
+const KODIK_REQUEST_TIMEOUT_MS = 35000;
 
 type ShikimoriCatalogResponseItem = {
   id: number;
@@ -43,6 +44,8 @@ type KodikSearchResult = {
   type?: string;
   episodes_count?: number | string;
   last_season?: number | string;
+  episodes?: Record<string, KodikEpisodePayload | string | null | undefined>;
+  episodes_data?: Record<string, KodikEpisodePayload | string | null | undefined>;
   material_data?: {
     anime_poster_url?: string;
     poster_url?: string;
@@ -56,6 +59,7 @@ type KodikSearchResult = {
 };
 
 type KodikSeasonPayload = {
+  title?: string;
   link?: string;
   episodes?: Record<string, KodikEpisodePayload | string | null | undefined>;
 };
@@ -191,7 +195,14 @@ function delay(ms: number) {
 }
 
 function isKodikRetryableError(error: unknown) {
-  return error instanceof Error && error.message.includes('HTTP 502');
+  return (
+    error instanceof Error &&
+    (error.message.includes('HTTP 502') ||
+      error.message.includes('HTTP 520') ||
+      error.message.includes('HTTP 521') ||
+      error.message.includes('HTTP 522') ||
+      error.message.includes('HTTP 524'))
+  );
 }
 
 async function requestKodikResults(params: Record<string, string>) {
@@ -200,7 +211,7 @@ async function requestKodikResults(params: Record<string, string>) {
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), KODIK_REQUEST_TIMEOUT_MS);
 
     try {
       const payload = await requestJson<KodikSearchResponse>(url, {
@@ -210,25 +221,25 @@ async function requestKodikResults(params: Record<string, string>) {
         },
         signal: controller.signal,
       });
-      console.log('Kodik Fetch Response:', payload);
       return payload.results ?? [];
     } catch (error) {
       console.error('Kodik request failed:', error);
 
       if (attempt === 0 && isKodikRetryableError(error)) {
-        await delay(2000);
+        await delay(2500);
         continue;
       }
 
-      if (
-        error instanceof Error &&
-        (error.name === 'AbortError' || error.message.includes('Network request failed'))
-      ) {
-        throw new Error(i18n.t('online.providerBlocked'));
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(i18n.t('online.providerTimeout'));
       }
 
       if (error instanceof Error && error.message.includes('Kodik timeout')) {
         throw new Error(i18n.t('online.providerTimeout'));
+      }
+
+      if (error instanceof Error && error.message.includes('Network request failed')) {
+        throw new Error(i18n.t('online.providerBlocked'));
       }
 
       if (
@@ -252,8 +263,8 @@ async function requestKodikResults(params: Record<string, string>) {
 function mapCatalogAnime(item: ShikimoriCatalogResponseItem): CatalogAnime {
   return {
     id: item.id,
-    title: item.russian || item.name || 'Unknown title',
-    originalTitle: item.name || item.russian || 'Unknown title',
+    title: item.russian || item.name || i18n.t('discover.unknownTitle'),
+    originalTitle: item.name || item.russian || i18n.t('discover.unknownTitle'),
     score: item.score || '0.0',
     posterUrl: buildShikimoriPosterUrl(item.image?.original),
     episodes: toPositiveNumber(item.episodes, 0),
@@ -262,11 +273,19 @@ function mapCatalogAnime(item: ShikimoriCatalogResponseItem): CatalogAnime {
   };
 }
 
+function buildSeasonLabel(seasonNumber: number) {
+  return `${i18n.t('online.seasonLabel')} ${seasonNumber}`;
+}
+
+function buildEpisodeTitle(episodeNumber: number) {
+  return i18n.t('online.episodeLabel', { value: episodeNumber });
+}
+
 function buildFallbackEpisodes(count: number, link: string | null) {
   return Array.from({ length: Math.max(count, 1) }, (_, index) => ({
     id: `episode-${index + 1}`,
     number: index + 1,
-    title: `Episode ${index + 1}`,
+    title: buildEpisodeTitle(index + 1),
     link,
     screenshot: null,
   }));
@@ -282,18 +301,30 @@ function parseSeasonNumber(value: unknown, fallback = 1) {
   return toPositiveNumber(numeric?.[0], fallback);
 }
 
+function getRootEpisodesPayload(result: KodikSearchResult) {
+  const candidates = [result.episodes, result.episodes_data];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
 function parseSeasonEpisodes(
   seasonPayload: KodikSeasonPayload | string | null | undefined,
   seasonLabel: string,
   fallbackLink: string | null,
-  fallbackCount: number
+  fallbackCount: number,
+  fallbackEpisodesData?: Record<string, KodikEpisodePayload | string | null | undefined>
 ) {
   if (typeof seasonPayload === 'string') {
     return buildFallbackEpisodes(fallbackCount, normalizeKodikLink(seasonPayload));
   }
 
   const seasonLink = normalizeKodikLink(seasonPayload?.link) ?? fallbackLink;
-  const episodesData = seasonPayload?.episodes;
+  const episodesData = seasonPayload?.episodes ?? fallbackEpisodesData;
 
   if (!episodesData || typeof episodesData !== 'object') {
     return buildFallbackEpisodes(fallbackCount, seasonLink);
@@ -307,7 +338,7 @@ function parseSeasonEpisodes(
         return {
           id: `${seasonLabel}-${episodeNumber || episodeKey}`,
           number: episodeNumber || 1,
-          title: `Episode ${episodeNumber || 1}`,
+          title: buildEpisodeTitle(episodeNumber || 1),
           link: normalizeKodikLink(episodePayload) ?? seasonLink,
           screenshot: null,
         };
@@ -315,7 +346,7 @@ function parseSeasonEpisodes(
 
       const payload = episodePayload ?? {};
       const link = normalizeKodikLink(payload.link) ?? seasonLink;
-      const title = normalizeText(payload.title) || `Episode ${episodeNumber || 1}`;
+      const title = normalizeText(payload.title) || buildEpisodeTitle(episodeNumber || 1);
       const screenshot = payload.screenshots?.[0] ?? null;
 
       return {
@@ -336,16 +367,26 @@ function parseSeasons(result: KodikSearchResult): KodikSeason[] {
   const fallbackCount = toPositiveNumber(result.episodes_count, 1);
   const seasonsPayload = result.seasons;
   const fallbackSeasonNumber = parseSeasonNumber(result.last_season, 1);
+  const rootEpisodesData = getRootEpisodesPayload(result);
 
   if (!seasonsPayload || typeof seasonsPayload !== 'object' || Array.isArray(seasonsPayload)) {
-    const fallbackLabel = `Season ${fallbackSeasonNumber}`;
+    const fallbackLabel = buildSeasonLabel(fallbackSeasonNumber);
 
     return [
       {
         id: `season-${fallbackSeasonNumber}`,
         label: fallbackLabel,
         link: fallbackLink,
-        episodes: buildFallbackEpisodes(fallbackCount, fallbackLink),
+        episodes: parseSeasonEpisodes(
+          {
+            link: fallbackLink ?? undefined,
+            episodes: rootEpisodesData,
+          },
+          fallbackLabel,
+          fallbackLink,
+          fallbackCount,
+          rootEpisodesData
+        ),
       },
     ];
   }
@@ -353,7 +394,8 @@ function parseSeasons(result: KodikSearchResult): KodikSeason[] {
   const seasons = Object.entries(seasonsPayload)
     .map(([seasonKey, seasonPayload], index) => {
       const numericSeason = parseSeasonNumber(seasonKey, index + 1);
-      const label = `Season ${numericSeason}`;
+      const label =
+        (typeof seasonPayload === 'string' ? '' : normalizeText(seasonPayload?.title)) || buildSeasonLabel(numericSeason);
       const seasonLink =
         typeof seasonPayload === 'string'
           ? normalizeKodikLink(seasonPayload)
@@ -377,69 +419,29 @@ function parseSeasons(result: KodikSearchResult): KodikSeason[] {
     : [
         {
           id: `season-${fallbackSeasonNumber}`,
-          label: `Season ${fallbackSeasonNumber}`,
+          label: buildSeasonLabel(fallbackSeasonNumber),
           link: fallbackLink,
           episodes: buildFallbackEpisodes(fallbackCount, fallbackLink),
         },
       ];
 }
 
-function buildKodikResultTitles(result: KodikSearchResult) {
-  return [
-    result.title,
-    result.other_title,
-  ]
-    .map((item) => normalizeComparisonText(item))
-    .filter(Boolean);
-}
-
-function isLikelyMatchingKodikResult(result: KodikSearchResult, expectedTitle: string) {
-  const normalizedExpected = normalizeComparisonText(expectedTitle);
-  if (!normalizedExpected) {
-    return true;
-  }
-
-  const expectedWords = normalizedExpected.split(' ').filter(Boolean);
-  const minMatchedWords = Math.max(2, Math.ceil(expectedWords.length * 0.6));
-
-  return buildKodikResultTitles(result).some((candidate) => {
-    if (!candidate) {
-      return false;
-    }
-
-    if (candidate === normalizedExpected) {
-      return true;
-    }
-
-    if (candidate.includes(normalizedExpected) || normalizedExpected.includes(candidate)) {
-      return true;
-    }
-
-    const candidateWords = new Set(candidate.split(' ').filter(Boolean));
-    let matchedWords = 0;
-
-    for (const word of expectedWords) {
-      if (candidateWords.has(word)) {
-        matchedWords += 1;
-      }
-    }
-
-    return matchedWords >= minMatchedWords;
-  });
-}
-
 function mergeTranslations(results: KodikSearchResult[]) {
   const translations = new Map<string, KodikTranslation>();
 
   for (const result of results) {
-    const translationTitle = normalizeText(result.translation?.title) || 'Original';
+    if (result.translation?.id == null) {
+      continue;
+    }
+
+    const translationTitle = normalizeText(result.translation?.title) || i18n.t('online.dubs.original');
     const translationType = normalizeText(result.translation?.type) || 'voice';
-    const key = `${normalizeComparisonText(translationTitle) || 'original'}::${normalizeComparisonText(translationType) || 'voice'}`;
     const playerLink = normalizeKodikLink(result.link);
     const seasons = parseSeasons(result);
     const posterUrl =
       normalizeKodikLink(result.material_data?.anime_poster_url) ??
       normalizeKodikLink(result.material_data?.poster_url);
+    const key = String(result.translation.id);
 
     const existing = translations.get(key);
 
@@ -449,7 +451,7 @@ function mergeTranslations(results: KodikSearchResult[]) {
         title: translationTitle,
         type: translationType,
         posterUrl,
-        playerLink,
+        playerLink: playerLink ?? seasons[0]?.link ?? null,
         seasons,
       });
       continue;
@@ -490,7 +492,7 @@ function mergeTranslations(results: KodikSearchResult[]) {
     translations.set(key, {
       ...existing,
       posterUrl: existing.posterUrl ?? posterUrl,
-      playerLink: existing.playerLink ?? playerLink,
+      playerLink: existing.playerLink ?? playerLink ?? seasons[0]?.link ?? null,
       seasons: [...mergedSeasons.values()].sort((left, right) => {
         const leftValue = toPositiveNumber(left.id.replace(/\D+/g, ''), 0);
         const rightValue = toPositiveNumber(right.id.replace(/\D+/g, ''), 0);
@@ -543,22 +545,45 @@ export async function fetchAnimeDetail(id: number) {
   } satisfies CatalogAnimeDetail;
 }
 
-export async function fetchKodikTranslations(shikimoriId: number, fallbackTitle?: string | null) {
-  try {
-    let results = await requestKodikResults({
-      shikimori_id: String(shikimoriId),
-    });
+export async function fetchKodikTranslations(shikimoriId: number, fallbackTitle?: string | string[] | null) {
+  const titleVariants = [
+    ...new Set(
+      (Array.isArray(fallbackTitle) ? fallbackTitle : [fallbackTitle])
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+    ),
+  ];
 
-    if (results.length === 0 && fallbackTitle?.trim()) {
-      results = (await requestKodikResults({
-        title: fallbackTitle.trim(),
-        strict: 'true',
-        types: 'anime-serial,anime',
-      })).filter((result) => isLikelyMatchingKodikResult(result, fallbackTitle.trim()));
+  try {
+    const results: KodikSearchResult[] = [];
+    let lastError: unknown = null;
+
+    try {
+      results.push(
+        ...(await requestKodikResults({
+          shikimori_id: String(shikimoriId),
+        }))
+      );
+    } catch (error) {
+      lastError = error;
+    }
+
+    for (const title of titleVariants) {
+      try {
+        results.push(
+          ...(await requestKodikResults({
+            title,
+            strict: 'true',
+            types: 'anime-serial,anime',
+          }))
+        );
+      } catch (error) {
+        lastError = error;
+      }
     }
 
     if (results.length === 0) {
-      throw new Error(i18n.t('online.providerError'));
+      throw lastError instanceof Error ? lastError : new Error(i18n.t('online.providerError'));
     }
 
     return mergeTranslations(results);

@@ -2,6 +2,55 @@ import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
+const STOP_KODIK_PLAYBACK_SCRIPT = `
+(function() {
+  try {
+    var mediaElements = Array.prototype.slice.call(document.querySelectorAll('video, audio'));
+    mediaElements.forEach(function(media) {
+      try { media.pause(); } catch (error) {}
+      try { media.currentTime = 0; } catch (error) {}
+      try { media.removeAttribute('src'); } catch (error) {}
+      try { if (typeof media.load === 'function') { media.load(); } } catch (error) {}
+    });
+
+    var iframeElements = Array.prototype.slice.call(document.querySelectorAll('iframe'));
+    iframeElements.forEach(function(frame) {
+      try { frame.src = 'about:blank'; } catch (error) {}
+    });
+
+    try {
+      if (window.player && typeof window.player.pause === 'function') {
+        window.player.pause();
+      }
+    } catch (error) {}
+
+    try {
+      if (typeof window.stop === 'function') {
+        window.stop();
+      }
+    } catch (error) {}
+
+    true;
+  } catch (error) {
+    true;
+  }
+})();
+`;
+
+function stopWebViewPlayback(target: WebView | null) {
+  if (!target) {
+    return;
+  }
+
+  try {
+    target.injectJavaScript(STOP_KODIK_PLAYBACK_SCRIPT);
+  } catch {}
+
+  try {
+    target.stopLoading();
+  } catch {}
+}
+
 export function KodikPlayerSurface({ uri, active = true }: { uri: string; active?: boolean }) {
   const webViewRef = useRef<WebView>(null);
   const [shouldRenderWebView, setShouldRenderWebView] = useState(true);
@@ -12,17 +61,11 @@ export function KodikPlayerSurface({ uri, active = true }: { uri: string; active
       return;
     }
 
-    try {
-      webViewRef.current?.injectJavaScript(
-        'document.querySelectorAll("video").forEach(function(v){try{v.pause();}catch(e){}}); true;'
-      );
-    } catch {
-      // noop
-    }
+    stopWebViewPlayback(webViewRef.current);
 
     const timeoutId = setTimeout(() => {
       setShouldRenderWebView(false);
-    }, 40);
+    }, 140);
 
     return () => {
       clearTimeout(timeoutId);
@@ -33,13 +76,7 @@ export function KodikPlayerSurface({ uri, active = true }: { uri: string; active
     const currentWebView = webViewRef.current;
 
     return () => {
-      try {
-        currentWebView?.injectJavaScript(
-          'document.querySelectorAll("video").forEach(function(v){try{v.pause();}catch(e){}}); true;'
-        );
-      } catch {
-        // noop
-      }
+      stopWebViewPlayback(currentWebView);
     };
   }, []);
 
