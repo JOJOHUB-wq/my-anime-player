@@ -48,6 +48,8 @@ type PlayerSnapshot = {
   playing: boolean;
 };
 
+const PLAYER_RED = '#FF3040';
+
 type FullscreenPlayerProps = {
   media: PlayableMedia;
   title?: string;
@@ -582,14 +584,14 @@ export function FullscreenPlayer({
                 style={[
                   styles.playPauseButton,
                   {
-                    backgroundColor: theme.surfaceStrong,
-                    borderColor: theme.cardBorder,
+                    backgroundColor: PLAYER_RED,
+                    borderColor: 'rgba(255,255,255,0.22)',
                   },
                 ]}>
                 <Ionicons
                   name={isPlaying ? 'pause' : 'play'}
                   size={28}
-                  color={theme.textPrimary}
+                  color="#FFFFFF"
                 />
               </Pressable>
 
@@ -622,15 +624,6 @@ export function FullscreenPlayer({
                   borderColor: theme.cardBorder,
                 },
               ]}>
-              <View style={styles.timelineHeader}>
-                <Text style={[styles.timeText, { color: theme.textSecondary }]}>
-                  {formatClock(position)}
-                </Text>
-                <Text style={[styles.timeText, { color: theme.textSecondary }]}>
-                  {formatClock(duration)}
-                </Text>
-              </View>
-
               <View
                 onLayout={handleProgressTrackLayout}
                 onStartShouldSetResponder={() => true}
@@ -643,7 +636,7 @@ export function FullscreenPlayer({
                     styles.progressFill,
                     {
                       width: `${progressRatio * 100}%`,
-                      backgroundColor: theme.accentPrimary,
+                      backgroundColor: PLAYER_RED,
                     },
                   ]}
                 />
@@ -652,10 +645,20 @@ export function FullscreenPlayer({
                     styles.progressThumb,
                     {
                       left: `${progressRatio * 100}%`,
-                      backgroundColor: theme.textPrimary,
+                      backgroundColor: '#FFFFFF',
+                      borderColor: PLAYER_RED,
                     },
                   ]}
                 />
+              </View>
+
+              <View style={styles.timelineHeader}>
+                <Text style={[styles.timeText, { color: theme.textSecondary }]}>
+                  {formatClock(position)}
+                </Text>
+                <Text style={[styles.timeText, { color: theme.textSecondary }]}>
+                  {formatClock(duration)}
+                </Text>
               </View>
 
               <View style={styles.bottomActions}>
@@ -784,27 +787,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 18,
     paddingHorizontal: 18,
-    paddingVertical: 16,
-    borderRadius: 30,
+    paddingVertical: 14,
+    borderRadius: 999,
     borderWidth: 1,
     overflow: 'hidden',
   },
   centerButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 24,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
   },
   playPauseButton: {
-    width: 88,
-    height: 88,
-    borderRadius: 28,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: PLAYER_RED,
+    shadowOpacity: 0.32,
+    shadowRadius: 18,
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    elevation: 10,
   },
   centerButtonLabel: {
     fontSize: 12,
@@ -833,21 +844,21 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingVertical: 14,
     overflow: 'hidden',
   },
   timelineHeader: {
+    marginTop: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
   },
   timeText: {
     fontSize: 12,
     fontWeight: '700',
   },
   progressTrack: {
-    height: 8,
+    height: 4,
     borderRadius: 999,
     overflow: 'visible',
     justifyContent: 'center',
@@ -858,11 +869,12 @@ const styles = StyleSheet.create({
   },
   progressThumb: {
     position: 'absolute',
-    top: -4,
+    top: -6,
     width: 16,
     height: 16,
     borderRadius: 8,
     marginLeft: -8,
+    borderWidth: 3,
   },
   bottomActions: {
     marginTop: 14,

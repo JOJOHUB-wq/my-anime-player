@@ -1,9 +1,6 @@
-import { Platform } from 'react-native';
-
 const SHIKIMORI_BASE_URL = 'https://shikimori.one';
 const KODIK_BASE_URL = 'https://kodikapi.com';
 const KODIK_TOKEN = '8b72506e7c10b6510834316dcb989601';
-const ALL_ORIGINS_BASE_URL = 'https://api.allorigins.win/get?url=';
 
 type ShikimoriCatalogResponseItem = {
   id: number;
@@ -16,10 +13,6 @@ type ShikimoriCatalogResponseItem = {
   kind?: string;
   episodes?: number;
   episodes_aired?: number;
-};
-
-type AllOriginsResponse = {
-  contents?: string;
 };
 
 type ShikimoriDetailResponse = ShikimoriCatalogResponseItem & {
@@ -163,6 +156,21 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+async function requestKodikResults(params: Record<string, string>) {
+  const searchParams = new URLSearchParams({
+    token: KODIK_TOKEN,
+    with_material_data: 'true',
+    with_episodes_data: 'true',
+    not_blocked_for_me: 'true',
+    ...params,
+  });
+
+  const url = `${KODIK_BASE_URL}/search?${searchParams.toString()}`;
+  const payload = await requestJson<KodikSearchResponse>(url);
+  console.log('Kodik Fetch Response:', payload);
+  return payload.results ?? [];
 }
 
 function mapCatalogAnime(item: ShikimoriCatalogResponseItem): CatalogAnime {
@@ -379,13 +387,14 @@ export async function fetchTrendingCatalog() {
 }
 
 export async function searchCatalog(query: string) {
-  const trimmedQuery = query.trim();
-  if (!trimmedQuery) {
+  const trimmed = query.trim();
+
+  if (!trimmed) {
     return fetchTrendingCatalog();
   }
 
   const payload = await requestJson<ShikimoriCatalogResponseItem[]>(
-    `${SHIKIMORI_BASE_URL}/api/animes?search=${encodeURIComponent(trimmedQuery)}&limit=20`
+    `${SHIKIMORI_BASE_URL}/api/animes?search=${encodeURIComponent(trimmed)}&limit=20`
   );
 
   return Array.isArray(payload) ? payload.map(mapCatalogAnime) : [];
@@ -408,42 +417,23 @@ export async function fetchAnimeDetail(id: number) {
   } satisfies CatalogAnimeDetail;
 }
 
-export async function fetchKodikTranslations(shikimoriId: number) {
-  const params = new URLSearchParams({
-    token: KODIK_TOKEN,
-    shikimori_id: String(shikimoriId),
-    with_material_data: 'true',
-    with_episodes_data: 'true',
-    not_blocked_for_me: 'true',
-  });
-
-  const directUrl = `${KODIK_BASE_URL}/search?${params.toString()}`;
-  const proxyUrl = `${ALL_ORIGINS_BASE_URL}${encodeURIComponent(directUrl)}`;
-  const fetchUrl = Platform.OS === 'web' ? proxyUrl : directUrl;
-
+export async function fetchKodikTranslations(shikimoriId: number, fallbackTitle?: string | null) {
   try {
-    const response = await fetch(fetchUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
+    let results = await requestKodikResults({
+      shikimori_id: String(shikimoriId),
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    if (results.length === 0 && fallbackTitle?.trim()) {
+      results = await requestKodikResults({
+        title: fallbackTitle.trim(),
+      });
     }
 
-    const data = await response.json();
-    const payload =
-      Platform.OS === 'web'
-        ? JSON.parse((data as AllOriginsResponse).contents || '{}')
-        : (data as KodikSearchResponse);
-
-    if (!payload.results || payload.results.length === 0) {
+    if (results.length === 0) {
       throw new Error('No results from Kodik');
     }
 
-    return mergeTranslations(payload.results);
+    return mergeTranslations(results);
   } catch (error) {
     console.error('Kodik Fetch Failed:', error);
     throw error;

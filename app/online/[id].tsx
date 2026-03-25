@@ -140,15 +140,23 @@ export default function OnlineAnimeDetailScreen() {
     setError(null);
 
     try {
-      const [nextDetail, nextTranslations] = await Promise.all([
-        fetchAnimeDetail(animeId),
-        fetchKodikTranslations(animeId),
-      ]);
-
+      const nextDetail = await fetchAnimeDetail(animeId);
       setDetail(nextDetail);
-      setTranslations(nextTranslations);
-      setSelectedDubId(nextTranslations[0]?.id ?? null);
-      setSelectedSeasonId(nextTranslations[0]?.seasons[0]?.id ?? null);
+
+      try {
+        const nextTranslations = await fetchKodikTranslations(
+          animeId,
+          nextDetail.title || nextDetail.originalTitle
+        );
+
+        setTranslations(nextTranslations);
+        setSelectedDubId(nextTranslations[0]?.id ?? null);
+        setSelectedSeasonId(nextTranslations[0]?.seasons[0]?.id ?? null);
+      } catch {
+        setTranslations([]);
+        setSelectedDubId(null);
+        setSelectedSeasonId(null);
+      }
     } catch {
       setDetail(null);
       setTranslations([]);

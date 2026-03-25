@@ -1,11 +1,9 @@
-import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { KodikPlayerSurface } from '@/src/components/player/kodik-player-surface.web';
+import { VideoPlayerScreen } from '@/src/components/player/video-player-screen';
 import { useApp } from '@/src/providers/app-provider';
 
 function resolveParam(value?: string | string[]) {
@@ -46,35 +44,14 @@ export default function WebviewPlayerScreen() {
   }
 
   return (
-    <View style={styles.root}>
-      <KodikPlayerSurface uri={url} />
-
-      <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-        <BlurView
-          intensity={44}
-          tint="dark"
-          style={[styles.topBar, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
-          <Pressable
-            onPress={() => {
-              router.back();
-            }}
-            style={[styles.iconButton, { backgroundColor: theme.surfaceMuted }]}>
-            <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
-          </Pressable>
-
-          <View style={styles.titleWrap}>
-            <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>
-              {title || 'Kodik Player'}
-            </Text>
-            {subtitle ? (
-              <Text style={[styles.subtitle, { color: theme.textSecondary }]} numberOfLines={1}>
-                {subtitle}
-              </Text>
-            ) : null}
-          </View>
-        </BlurView>
-      </SafeAreaView>
-    </View>
+    <VideoPlayerScreen
+      media={{ uri: url }}
+      title={title}
+      subtitle={subtitle}
+      onClose={() => {
+        router.back();
+      }}
+    />
   );
 }
 
@@ -84,38 +61,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
   },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     paddingHorizontal: 16,
     paddingTop: 8,
-  },
-  topBar: {
-    minHeight: 64,
-    borderRadius: 22,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  titleWrap: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  subtitle: {
-    marginTop: 2,
-    fontSize: 12,
-    fontWeight: '600',
   },
   messageCard: {
     marginTop: 24,

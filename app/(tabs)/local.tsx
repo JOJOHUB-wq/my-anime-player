@@ -39,6 +39,7 @@ import {
 } from '@/src/db/database';
 import { useDatabaseContext } from '@/src/db/db-context';
 import { useApp } from '@/src/providers/app-provider';
+import { downloadYouTubeVideo } from '@/src/services/youtube-downloader';
 
 type PlaylistMenuMode = 'actions' | 'rename' | null;
 type ImportCandidate = {
@@ -304,6 +305,10 @@ export default function LocalTabScreen() {
   const [submittingAction, setSubmittingAction] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [youtubeModalVisible, setYouTubeModalVisible] = useState(false);
+  const [youtubeUrl, setYouTubeUrl] = useState('');
+  const [youtubeDownloading, setYouTubeDownloading] = useState(false);
+  const [youtubeProgress, setYouTubeProgress] = useState(0);
 
   const sortedPlaylistOptions = useMemo(
     () => playlists.map((playlist) => ({ id: playlist.id, name: playlist.name, icon: playlist.icon })),
@@ -362,6 +367,16 @@ export default function LocalTabScreen() {
     setNewImportPlaylistName('');
     setNewImportPlaylistIcon(DEFAULT_PLAYLIST_ICON);
   }, []);
+
+  const closeYouTubeModal = useCallback(() => {
+    if (youtubeDownloading) {
+      return;
+    }
+
+    setYouTubeModalVisible(false);
+    setYouTubeUrl('');
+    setYouTubeProgress(0);
+  }, [youtubeDownloading]);
 
   const prepareImportSelection = useCallback(
     (assets: ImportCandidate[], fallbackName?: string) => {
@@ -510,6 +525,37 @@ export default function LocalTabScreen() {
       setCreatingPlaylist(false);
     }
   }, [customPlaylistIcon, customPlaylistName, db, loadPlaylists, t]);
+
+  const handleYouTubeDownload = useCallback(async () => {
+    setError(null);
+    setMessage(null);
+
+    if (!youtubeUrl.trim()) {
+      setError('Вставте посилання на YouTube.');
+      return;
+    }
+
+    setYouTubeDownloading(true);
+    setYouTubeProgress(0);
+
+    try {
+      await downloadYouTubeVideo(db, youtubeUrl, {
+        playlistName: 'YouTube',
+        playlistIcon: 'logo-youtube',
+        onProgress: setYouTubeProgress,
+      });
+
+      setMessage('YouTube-відео додано до локальної бібліотеки.');
+      setYouTubeModalVisible(false);
+      setYouTubeUrl('');
+      setYouTubeProgress(0);
+      await loadPlaylists();
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : 'Не вдалося завантажити YouTube-відео.');
+    } finally {
+      setYouTubeDownloading(false);
+    }
+  }, [db, loadPlaylists, youtubeUrl]);
 
   const handleTogglePin = useCallback(async () => {
     if (!selectedPlaylist) {
@@ -694,6 +740,16 @@ export default function LocalTabScreen() {
                       setCreateModalVisible(true);
                     }}
                     accent={theme.accentTertiary}
+                    large
+                  />
+                  <PremiumActionCard
+                    icon="logo-youtube"
+                    title="Download from YouTube"
+                    subtitle="Вставте посилання, витягніть MP4 через Cobalt і додайте його в бібліотеку."
+                    onPress={() => {
+                      setYouTubeModalVisible(true);
+                    }}
+                    accent="#FF3040"
                     large
                   />
                 </Animated.View>
@@ -893,6 +949,63 @@ export default function LocalTabScreen() {
                 <ActivityIndicator size="small" color={PRIMARY_TEXT} />
               </View>
             ) : null}
+          </GlassCard>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={youtubeModalVisible}
+        onRequestClose={closeYouTubeModal}>
+        <View style={styles.modalBackdrop}>
+          <GlassCard style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Download from YouTube</Text>
+            <Text style={[styles.modalCopy, styles.modalMuted]}>
+              Вставте повне посилання на YouTube. Після отримання прямого MP4 файл буде збережено в локальну бібліотеку.
+            </Text>
+            <TextInput
+              value={youtubeUrl}
+              onChangeText={setYouTubeUrl}
+              placeholder="https://www.youtube.com/watch?v=..."
+              placeholderTextColor={SECONDARY_TEXT}
+              style={styles.modalInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+
+            {youtubeDownloading ? (
+              <View style={styles.youtubeProgressWrap}>
+                <View style={styles.youtubeProgressTrack}>
+                  <View
+                    style={[
+                      styles.youtubeProgressFill,
+                      { width: `${Math.max(4, Math.round(youtubeProgress * 100))}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.youtubeProgressLabel}>{Math.round(youtubeProgress * 100)}%</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.modalActions}>
+              <Pressable disabled={youtubeDownloading} onPress={closeYouTubeModal} style={styles.modalButton}>
+                <Text style={styles.modalButtonLabel}>{t('common.cancel')}</Text>
+              </Pressable>
+              <Pressable
+                disabled={youtubeDownloading}
+                onPress={() => {
+                  void handleYouTubeDownload();
+                }}
+                style={[styles.modalButton, styles.modalButtonPrimary]}>
+                {youtubeDownloading ? (
+                  <ActivityIndicator size="small" color={PRIMARY_TEXT} />
+                ) : (
+                  <Text style={styles.modalButtonLabel}>Download</Text>
+                )}
+              </Pressable>
+            </View>
           </GlassCard>
         </View>
       </Modal>
@@ -1387,6 +1500,27 @@ const styles = StyleSheet.create({
   modalButtonLabel: {
     color: PRIMARY_TEXT,
     fontSize: 14,
+    fontWeight: '800',
+  },
+  youtubeProgressWrap: {
+    gap: 10,
+  },
+  youtubeProgressTrack: {
+    height: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: GLASS_BORDER,
+  },
+  youtubeProgressFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#FF3040',
+  },
+  youtubeProgressLabel: {
+    color: PRIMARY_TEXT,
+    fontSize: 13,
     fontWeight: '800',
   },
   selectorList: {

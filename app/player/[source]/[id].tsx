@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { FullscreenPlayer } from '@/src/components/player/fullscreen-player';
+import { VideoPlayerScreen } from '@/src/components/player/video-player-screen';
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import {
@@ -111,7 +111,7 @@ export default function PlayerScreen() {
   }
 
   return (
-    <FullscreenPlayer
+    <VideoPlayerScreen
       media={{
         uri: video.uri || video.remote_url || '',
         progress: video.progress,
