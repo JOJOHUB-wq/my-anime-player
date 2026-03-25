@@ -18,6 +18,8 @@ import { useTranslation } from 'react-i18next';
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { GlassPressable } from '@/src/components/ui/glass-pressable';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
+import { clearBrokenVideoEntries, initializeDatabase } from '@/src/db/database';
+import { useDatabaseContext } from '@/src/db/db-context';
 import { SUPPORTED_LANGUAGES } from '@/src/i18n';
 import { useApp } from '@/src/providers/app-provider';
 import { THEME_PRESET_OPTIONS } from '@/src/theme/liquid';
@@ -47,6 +49,7 @@ function SettingRow({
 }
 
 export default function SettingsTabScreen() {
+  const db = useDatabaseContext();
   const { t } = useTranslation();
   const {
     theme,
@@ -115,6 +118,22 @@ export default function SettingsTabScreen() {
       setSaving(false);
     }
   }, [t]);
+
+  const handleClearBrokenDownloads = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      await initializeDatabase(db);
+      await clearBrokenVideoEntries(db);
+      setMessage(t('settings.clearBrokenDownloadsDone'));
+    } catch {
+      setError(t('settings.clearBrokenDownloadsError'));
+    } finally {
+      setSaving(false);
+    }
+  }, [db, t]);
 
   if (!ready) {
     return (
@@ -223,6 +242,22 @@ export default function SettingsTabScreen() {
               <ActivityIndicator size="small" color={theme.textPrimary} />
             ) : (
               <Ionicons name="trash-outline" size={18} color={theme.textPrimary} />
+            )}
+          </GlassPressable>
+
+          <GlassPressable
+            onPress={() => {
+              void handleClearBrokenDownloads();
+            }}
+            contentStyle={styles.selectionRow}>
+            <View style={styles.rowCopy}>
+              <Text style={[styles.rowTitle, { color: theme.textPrimary }]}>{t('settings.clearBrokenDownloads')}</Text>
+              <Text style={[styles.rowDescription, { color: theme.textSecondary }]}>{t('settings.clearBrokenDownloadsCopy')}</Text>
+            </View>
+            {saving ? (
+              <ActivityIndicator size="small" color={theme.textPrimary} />
+            ) : (
+              <Ionicons name="warning-outline" size={18} color={theme.textPrimary} />
             )}
           </GlassPressable>
         </Animated.View>

@@ -1,5 +1,4 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
 
 import {
   importVideoFromSource,
@@ -7,26 +6,22 @@ import {
   type DatabaseHandle,
   type VideoRow,
 } from '@/src/db/database';
+import i18n from '@/src/i18n';
 
-const COBALT_API_URL = 'https://api.cobalt.tools/api/json';
 const YOUTUBE_DOWNLOAD_DIRECTORY = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? ''}youtube-imports/`;
+const MEDIA_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL || 'http://217.60.245.84:3000/api';
 
-type CobaltPickerItem = {
-  url?: string;
-  type?: string;
-  filename?: string;
+type DownloadSource = {
+  url: string;
+  filename: string;
 };
 
-type CobaltResponse = {
-  status?: string;
+type YouTubeExtractResponse = {
+  ok?: boolean;
+  title?: string;
   url?: string;
-  text?: string;
   filename?: string;
-  picker?: CobaltPickerItem[];
-  error?: {
-    code?: string;
-    context?: unknown;
-  };
+  error?: string;
 };
 
 function sanitizeFilename(filename: string) {
@@ -54,64 +49,32 @@ function deriveFilename(sourceUrl: string, providedFilename?: string | null) {
       return sanitizeFilename(segment);
     }
   } catch {
-    // Ignore malformed URL and fall back to a timestamp filename.
+    // Ignore malformed URL and fall back to a generated filename.
   }
 
   return `youtube-${Date.now()}.mp4`;
 }
 
-function resolveDirectVideo(payload: CobaltResponse) {
-  if (payload.url) {
-    return {
-      url: payload.url,
-      filename: deriveFilename(payload.url, payload.filename),
-    };
-  }
-
-  if (Array.isArray(payload.picker) && payload.picker.length > 0) {
-    const preferred =
-      payload.picker.find((item) => item.type?.includes('mp4') && item.url) ??
-      payload.picker.find((item) => item.url);
-
-    if (preferred?.url) {
-      return {
-        url: preferred.url,
-        filename: deriveFilename(preferred.url, preferred.filename ?? payload.filename),
-      };
-    }
-  }
-
-  const errorText =
-    payload.text ||
-    payload.error?.code ||
-    'Cobalt не повернув пряме посилання на відео.';
-  throw new Error(errorText);
-}
-
-async function requestCobaltDownload(youtubeUrl: string) {
-  const response = await fetch(COBALT_API_URL, {
+async function requestBackendExtraction(youtubeUrl: string): Promise<DownloadSource> {
+  const response = await fetch(`${MEDIA_BACKEND_BASE_URL}/youtube/extract`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      url: youtubeUrl,
-      vCodec: 'h264',
-    }),
+    body: JSON.stringify({ url: youtubeUrl }),
   });
 
-  const payload = (await response.json()) as CobaltResponse;
+  const payload = (await response.json()) as YouTubeExtractResponse;
 
-  if (!response.ok || payload.status === 'error') {
-    const message =
-      payload.text ||
-      payload.error?.code ||
-      `Cobalt responded with HTTP ${response.status}.`;
-    throw new Error(message);
+  if (!response.ok || !payload.url) {
+    throw new Error(payload.error || i18n.t('local.youtubeError'));
   }
 
-  return resolveDirectVideo(payload);
+  return {
+    url: payload.url,
+    filename: deriveFilename(payload.url, payload.filename || payload.title),
+  };
 }
 
 export async function downloadYouTubeVideo(
@@ -126,17 +89,13 @@ export async function downloadYouTubeVideo(
   const trimmedUrl = youtubeUrl.trim();
 
   if (!trimmedUrl) {
-    throw new Error('Вставте коректне YouTube-посилання.');
-  }
-
-  if (Platform.OS === 'web') {
-    throw new Error('YouTube download доступний тільки на iOS та Android.');
+    throw new Error(i18n.t('local.youtubeEmptyUrl'));
   }
 
   await initializeDatabase(db);
-
-  const resolved = await requestCobaltDownload(trimmedUrl);
   await FileSystem.makeDirectoryAsync(YOUTUBE_DOWNLOAD_DIRECTORY, { intermediates: true });
+
+  const resolved = await requestBackendExtraction(trimmedUrl);
 
   const temporaryUri = `${YOUTUBE_DOWNLOAD_DIRECTORY}${Date.now()}-${resolved.filename}`;
   const resumable = FileSystem.createDownloadResumable(
@@ -170,8 +129,9 @@ export async function downloadYouTubeVideo(
     await FileSystem.deleteAsync(result?.uri ?? temporaryUri, { idempotent: true }).catch(() => undefined);
     return imported;
   } catch (error) {
+    console.warn('YouTube download failed:', error);
     await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => undefined);
-    throw error;
+    throw error instanceof Error ? error : new Error(i18n.t('local.youtubeError'));
   }
 }
 

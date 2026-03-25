@@ -1,6 +1,8 @@
+import i18n from '@/src/i18n';
+import { Platform } from 'react-native';
+
 const SHIKIMORI_BASE_URL = 'https://shikimori.one';
-const KODIK_BASE_URL = 'https://kodikapi.com';
-const KODIK_TOKEN = '8b72506e7c10b6510834316dcb989601';
+const MEDIA_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL || 'http://217.60.245.84:3000/api';
 
 type ShikimoriCatalogResponseItem = {
   id: number;
@@ -159,18 +161,34 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 async function requestKodikResults(params: Record<string, string>) {
-  const searchParams = new URLSearchParams({
-    token: KODIK_TOKEN,
-    with_material_data: 'true',
-    with_episodes_data: 'true',
-    not_blocked_for_me: 'true',
-    ...params,
-  });
+  const searchParams = new URLSearchParams(params);
 
-  const url = `${KODIK_BASE_URL}/search?${searchParams.toString()}`;
-  const payload = await requestJson<KodikSearchResponse>(url);
-  console.log('Kodik Fetch Response:', payload);
-  return payload.results ?? [];
+  const url = `${MEDIA_BACKEND_BASE_URL}/kodik/search?${searchParams.toString()}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const payload = await requestJson<KodikSearchResponse>(url, {
+      headers: {
+        Accept: 'application/json',
+        ...(Platform.OS === 'web' ? {} : { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }),
+      },
+      signal: controller.signal,
+    });
+    console.log('Kodik Fetch Response:', payload);
+    return payload.results ?? [];
+  } catch (error) {
+    console.error('Kodik request failed:', error);
+    if (
+      error instanceof Error &&
+      (error.name === 'AbortError' || error.message.includes('Network request failed'))
+    ) {
+      throw new Error(i18n.t('online.providerBlocked'));
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function mapCatalogAnime(item: ShikimoriCatalogResponseItem): CatalogAnime {
@@ -409,7 +427,7 @@ export async function fetchAnimeDetail(id: number) {
 
   return {
     ...base,
-    description: normalizeText(payload.description) || 'Описание недоступно.',
+    description: normalizeText(payload.description) || i18n.t('discover.descriptionFallback'),
     status: normalizeText(payload.status) || 'ongoing',
     genres: Array.isArray(payload.genres)
       ? payload.genres.map((genre) => genre.russian || genre.name).filter(Boolean)
@@ -430,7 +448,7 @@ export async function fetchKodikTranslations(shikimoriId: number, fallbackTitle?
     }
 
     if (results.length === 0) {
-      throw new Error('No results from Kodik');
+      throw new Error(i18n.t('online.providerError'));
     }
 
     return mergeTranslations(results);

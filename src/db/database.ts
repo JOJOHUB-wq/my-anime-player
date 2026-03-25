@@ -1072,6 +1072,7 @@ export async function getVideoById(db: DatabaseHandle, videoId: number) {
 
   return {
     ...row,
+    uri: toNullableString(row.uri) ?? '',
     thumbnail_uri: toNullableString(row.thumbnail_uri),
     playlist_id: toNumber(row.playlist_id),
     episode_num: toNullableEpisode(row.episode_num),
@@ -1670,6 +1671,67 @@ export async function deleteVideoById(
     if (info.exists) {
       await FileSystem.deleteAsync(row.thumbnail_uri, { idempotent: true });
     }
+  }
+}
+
+export async function clearBrokenVideoEntries(db: DatabaseHandle) {
+  const isBrokenVideo = (video: VideoRow) => {
+    const uri = video.uri.trim();
+    const remoteUrl = (video.remote_url ?? '').trim();
+    const placeholderFilename = /^youtube-placeholder-/i.test(video.filename);
+
+    return (
+      placeholderFilename ||
+      (!uri && !remoteUrl) ||
+      (placeholderFilename && video.download_status !== 'downloaded')
+    );
+  };
+
+  if (isWebDatabase(db)) {
+    await mutateWebDatabase(async (state) => {
+      const brokenVideos = state.videos.filter(isBrokenVideo);
+
+      for (const video of brokenVideos) {
+        if (video.uri && isWebBlobRef(video.uri)) {
+          revokeCachedWebBlobUrl(video.uri);
+          await deleteWebBlob(extractWebBlobKey(video.uri));
+        }
+        if (video.thumbnail_uri && isWebBlobRef(video.thumbnail_uri)) {
+          revokeCachedWebBlobUrl(video.thumbnail_uri);
+          await deleteWebBlob(extractWebBlobKey(video.thumbnail_uri));
+        }
+      }
+
+      state.videos = state.videos.filter((video) => !isBrokenVideo(video));
+    });
+    return;
+  }
+
+  const rows = await db.getAllAsync<VideoRow>(
+    `
+      SELECT
+        id,
+        uri,
+        filename,
+        thumbnail_uri,
+        playlist_id,
+        episode_num,
+        progress,
+        duration,
+        is_pinned,
+        external_id,
+        remote_url,
+        download_status,
+        download_progress
+      FROM videos
+      WHERE
+        filename LIKE 'youtube-placeholder-%'
+        OR (COALESCE(TRIM(uri), '') = '' AND COALESCE(TRIM(remote_url), '') = '')
+    `
+  );
+
+  for (const row of rows) {
+    await deleteVideoById(db, row.id);
   }
 }
 

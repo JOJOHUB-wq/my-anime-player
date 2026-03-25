@@ -115,7 +115,7 @@ function PremiumActionCard({
 }) {
   return (
     <Pressable onPress={onPress} style={[styles.actionPressable, large && styles.actionPressableLarge]}>
-      <BlurView intensity={40} tint="dark" style={[styles.actionCard, large && styles.actionCardLarge]}>
+      <BlurView intensity={30} tint="dark" style={[styles.actionCard, large && styles.actionCardLarge]}>
         <LinearGradient
           colors={[`${accent}28`, 'rgba(255,255,255,0.01)']}
           start={{ x: 0, y: 0 }}
@@ -152,7 +152,7 @@ function PlaylistCard({
       layout={LinearTransition.springify().damping(18).stiffness(180)}
       style={styles.playlistShell}>
       <Pressable onPress={onPress}>
-        <BlurView intensity={40} tint="dark" style={styles.playlistCard}>
+        <BlurView intensity={30} tint="dark" style={styles.playlistCard}>
           <View style={styles.playlistArtwork}>
             {item.thumbnailUri ? (
               <Image source={{ uri: item.thumbnailUri }} style={styles.playlistThumbnail} contentFit="cover" />
@@ -531,7 +531,7 @@ export default function LocalTabScreen() {
     setMessage(null);
 
     if (!youtubeUrl.trim()) {
-      setError('Вставте посилання на YouTube.');
+      setError(t('local.youtubeEmptyUrl'));
       return;
     }
 
@@ -540,22 +540,22 @@ export default function LocalTabScreen() {
 
     try {
       await downloadYouTubeVideo(db, youtubeUrl, {
-        playlistName: 'YouTube',
+        playlistName: t('local.youtubeActionTitle'),
         playlistIcon: 'logo-youtube',
         onProgress: setYouTubeProgress,
       });
 
-      setMessage('YouTube-відео додано до локальної бібліотеки.');
+      setMessage(t('local.youtubeSuccess'));
       setYouTubeModalVisible(false);
       setYouTubeUrl('');
       setYouTubeProgress(0);
       await loadPlaylists();
     } catch (downloadError) {
-      setError(downloadError instanceof Error ? downloadError.message : 'Не вдалося завантажити YouTube-відео.');
+      setError(downloadError instanceof Error ? downloadError.message : t('local.youtubeError'));
     } finally {
       setYouTubeDownloading(false);
     }
-  }, [db, loadPlaylists, youtubeUrl]);
+  }, [db, loadPlaylists, t, youtubeUrl]);
 
   const handleTogglePin = useCallback(async () => {
     if (!selectedPlaylist) {
@@ -691,7 +691,7 @@ export default function LocalTabScreen() {
                     </Pressable>
                   </View>
 
-                  <BlurView intensity={40} tint="dark" style={styles.heroPanel}>
+                  <BlurView intensity={30} tint="dark" style={styles.heroPanel}>
                     <LinearGradient
                       colors={['rgba(56, 189, 248, 0.18)', 'rgba(124, 58, 237, 0.12)', 'rgba(2, 6, 23, 0.02)']}
                       style={StyleSheet.absoluteFill}
@@ -699,7 +699,7 @@ export default function LocalTabScreen() {
                     <View style={styles.heroPanelRow}>
                       <View style={styles.heroBadge}>
                         <Ionicons name="sparkles-outline" size={16} color={theme.accentSecondary} />
-                        <Text style={styles.heroBadgeLabel}>Atherium Premium</Text>
+                        <Text style={styles.heroBadgeLabel}>{t('app.name')}</Text>
                       </View>
                       <View style={styles.heroCountBadge}>
                         <Text style={styles.heroCountText}>{playlists.length}</Text>
@@ -744,8 +744,8 @@ export default function LocalTabScreen() {
                   />
                   <PremiumActionCard
                     icon="logo-youtube"
-                    title="Download from YouTube"
-                    subtitle="Вставте посилання, витягніть MP4 через Cobalt і додайте його в бібліотеку."
+                    title={t('local.youtubeActionTitle')}
+                    subtitle={t('local.youtubeActionSubtitle')}
                     onPress={() => {
                       setYouTubeModalVisible(true);
                     }}
@@ -755,13 +755,13 @@ export default function LocalTabScreen() {
                 </Animated.View>
 
                 {error ? (
-                  <BlurView intensity={40} tint="dark" style={styles.noticeCard}>
+                  <BlurView intensity={30} tint="dark" style={styles.noticeCard}>
                     <Text style={styles.noticeError}>{error}</Text>
                   </BlurView>
                 ) : null}
 
                 {message ? (
-                  <BlurView intensity={40} tint="dark" style={styles.noticeCard}>
+                  <BlurView intensity={30} tint="dark" style={styles.noticeCard}>
                     <Text style={styles.noticeSuccess}>{message}</Text>
                   </BlurView>
                 ) : null}
@@ -771,7 +771,7 @@ export default function LocalTabScreen() {
             }
             ListEmptyComponent={
               <View style={styles.emptyStateWrap}>
-                <BlurView intensity={40} tint="dark" style={styles.emptyCard}>
+                <BlurView intensity={30} tint="dark" style={styles.emptyCard}>
                   <Ionicons name="add-circle-outline" size={30} color={PRIMARY_TEXT} />
                   <Text style={styles.emptyTitle}>{t('local.emptyTitle')}</Text>
                   <Text style={styles.emptyCopy}>{t('local.emptyImportPrompt')}</Text>
@@ -960,14 +960,12 @@ export default function LocalTabScreen() {
         onRequestClose={closeYouTubeModal}>
         <View style={styles.modalBackdrop}>
           <GlassCard style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Download from YouTube</Text>
-            <Text style={[styles.modalCopy, styles.modalMuted]}>
-              Вставте повне посилання на YouTube. Після отримання прямого MP4 файл буде збережено в локальну бібліотеку.
-            </Text>
+            <Text style={styles.modalTitle}>{t('local.youtubeModalTitle')}</Text>
+            <Text style={[styles.modalCopy, styles.modalMuted]}>{t('local.youtubeModalCopy')}</Text>
             <TextInput
               value={youtubeUrl}
               onChangeText={setYouTubeUrl}
-              placeholder="https://www.youtube.com/watch?v=..."
+              placeholder={t('local.youtubePlaceholder')}
               placeholderTextColor={SECONDARY_TEXT}
               style={styles.modalInput}
               autoCapitalize="none"
@@ -1002,7 +1000,7 @@ export default function LocalTabScreen() {
                 {youtubeDownloading ? (
                   <ActivityIndicator size="small" color={PRIMARY_TEXT} />
                 ) : (
-                  <Text style={styles.modalButtonLabel}>Download</Text>
+                  <Text style={styles.modalButtonLabel}>{t('local.youtubeStart')}</Text>
                 )}
               </Pressable>
             </View>
@@ -1109,7 +1107,7 @@ const styles = StyleSheet.create({
   heroPanel: {
     marginTop: 18,
     padding: 18,
-    borderRadius: 22,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: GLASS_BORDER,
     overflow: 'hidden',
@@ -1185,7 +1183,7 @@ const styles = StyleSheet.create({
   actionCard: {
     minHeight: 132,
     padding: 16,
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: GLASS_BORDER,
     overflow: 'hidden',

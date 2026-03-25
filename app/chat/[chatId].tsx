@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
   ListRenderItemInfo,
   NativeSyntheticEvent,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -107,65 +109,70 @@ export default function ChatScreen() {
 
   return (
     <LiquidBackground>
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={[styles.backButton, { borderColor: theme.cardBorder }]}>
-            <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              if (friend?.userId) {
-                router.push({
-                  pathname: '/user/[userId]',
-                  params: { userId: friend.userId },
-                });
-              }
-            }}
-            style={styles.headerCopy}>
-            <Text style={[styles.title, { color: theme.textPrimary }]}>{friend?.name ?? 'Chat'}</Text>
-            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{friend?.handle ?? '@unknown'}</Text>
-          </Pressable>
-        </View>
-
-        <FlatList
-          data={messages}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            loading ? (
-              <View style={styles.loadingWrap}>
-                <ActivityIndicator size="small" color={theme.textPrimary} />
-              </View>
-            ) : (
-              <GlassCard style={styles.emptyCard}>
-                <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>No messages yet</Text>
-                <Text style={[styles.emptyCopy, { color: theme.textSecondary }]}>Start the conversation below.</Text>
-              </GlassCard>
-            )
-          }
-        />
-
-        <View style={styles.composerWrap}>
-          <GlassCard style={styles.composerCard}>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Type a message"
-              placeholderTextColor={theme.textMuted}
-              style={[styles.input, { color: theme.textPrimary }]}
-              multiline={false}
-              returnKeyType="send"
-              blurOnSubmit={false}
-              onSubmitEditing={handleSubmitEditing}
-            />
-            <Pressable onPress={() => { void submit(); }} style={[styles.sendButton, { backgroundColor: theme.accentPrimary }]}>
-              <Ionicons name="send" size={18} color="#05070F" />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardRoot}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.header}>
+            <Pressable onPress={() => router.back()} style={[styles.backButton, { borderColor: theme.cardBorder }]}>
+              <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
             </Pressable>
-          </GlassCard>
-        </View>
-      </SafeAreaView>
+            <Pressable
+              onPress={() => {
+                if (friend?.userId) {
+                  router.push({
+                    pathname: '/user/[userId]',
+                    params: { userId: friend.userId },
+                  });
+                }
+              }}
+              style={styles.headerCopy}>
+              <Text style={[styles.title, { color: theme.textPrimary }]}>{friend?.name ?? 'Chat'}</Text>
+              <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{friend?.handle ?? '@unknown'}</Text>
+            </Pressable>
+          </View>
+
+          <FlatList
+            data={messages}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              loading ? (
+                <View style={styles.loadingWrap}>
+                  <ActivityIndicator size="small" color={theme.textPrimary} />
+                </View>
+              ) : (
+                <GlassCard style={styles.emptyCard}>
+                  <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>No messages yet</Text>
+                  <Text style={[styles.emptyCopy, { color: theme.textSecondary }]}>Start the conversation below.</Text>
+                </GlassCard>
+              )
+            }
+          />
+
+          <View style={styles.composerWrap}>
+            <GlassCard style={styles.composerCard}>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="Type a message"
+                placeholderTextColor={theme.textMuted}
+                style={[styles.input, { color: theme.textPrimary }]}
+                multiline={false}
+                returnKeyType="send"
+                blurOnSubmit={false}
+                onSubmitEditing={handleSubmitEditing}
+              />
+              <Pressable onPress={() => { void submit(); }} style={[styles.sendButton, { backgroundColor: theme.accentPrimary }]}>
+                <Ionicons name="send" size={18} color="#05070F" />
+              </Pressable>
+            </GlassCard>
+          </View>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
     </LiquidBackground>
   );
 }
@@ -173,6 +180,7 @@ export default function ChatScreen() {
 // TODO: Implement End-to-End Encryption with AES-256 and WebSockets.
 
 const styles = StyleSheet.create({
+  keyboardRoot: { flex: 1 },
   safeArea: { flex: 1 },
   header: {
     paddingHorizontal: 18,

@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
+import { useTranslation } from 'react-i18next';
 
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
@@ -29,6 +30,7 @@ function CatalogCard({
   onPress: () => void;
 }) {
   const { theme } = useApp();
+  const { t } = useTranslation();
 
   return (
     <Animated.View
@@ -37,7 +39,7 @@ function CatalogCard({
       style={styles.cardShell}>
       <Pressable onPress={onPress}>
         <BlurView
-          intensity={40}
+          intensity={30}
           tint="dark"
           style={[styles.card, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
           <View style={styles.posterShell}>
@@ -60,7 +62,7 @@ function CatalogCard({
               {item.title}
             </Text>
             <Text style={[styles.cardMeta, { color: theme.textSecondary }]} numberOfLines={1}>
-              {item.episodesAired || item.episodes || 0} серий
+              {t('discover.episodesCount', { count: item.episodesAired || item.episodes || 0 })}
             </Text>
           </View>
         </BlurView>
@@ -71,34 +73,84 @@ function CatalogCard({
 
 export default function DiscoverTabScreen() {
   const { theme } = useApp();
+  const { t } = useTranslation();
   const [items, setItems] = useState<CatalogAnime[]>([]);
   const [query, setQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<CatalogAnime[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadCatalog = useCallback(async (nextQuery?: string) => {
-    const trimmedQuery = (nextQuery ?? activeQuery).trim();
-    setError(null);
-    setRefreshing(true);
+  const showSuggestions = useMemo(
+    () => query.trim().length > 0 && (suggestionsLoading || suggestions.length > 0),
+    [query, suggestions, suggestionsLoading]
+  );
 
-    try {
-      const nextItems = trimmedQuery ? await searchCatalog(trimmedQuery) : await fetchTrendingCatalog();
-      setItems(nextItems);
-      setActiveQuery(trimmedQuery);
-    } catch {
-      setError('Не удалось загрузить каталог.');
-      setItems([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [activeQuery]);
+  const loadCatalog = useCallback(
+    async (nextQuery?: string) => {
+      const trimmedQuery = (nextQuery ?? activeQuery).trim();
+      setError(null);
+      setRefreshing(true);
+
+      try {
+        const nextItems = trimmedQuery
+          ? await searchCatalog(trimmedQuery)
+          : await fetchTrendingCatalog();
+        setItems(nextItems);
+        setActiveQuery(trimmedQuery);
+      } catch {
+        setError(t('discover.loadError'));
+        setItems([]);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [activeQuery, t]
+  );
 
   useEffect(() => {
     void loadCatalog();
   }, [loadCatalog]);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+
+    if (trimmed.length < 2) {
+      setSuggestions([]);
+      setSuggestionsLoading(false);
+      return;
+    }
+
+    let active = true;
+    const timeoutId = setTimeout(() => {
+      void (async () => {
+        setSuggestionsLoading(true);
+
+        try {
+          const results = await searchCatalog(trimmed);
+          if (active) {
+            setSuggestions(results.slice(0, 6));
+          }
+        } catch {
+          if (active) {
+            setSuggestions([]);
+          }
+        } finally {
+          if (active) {
+            setSuggestionsLoading(false);
+          }
+        }
+      })();
+    }, 220);
+
+    return () => {
+      active = false;
+      clearTimeout(timeoutId);
+    };
+  }, [query]);
 
   const renderItem = ({ item, index }: ListRenderItemInfo<CatalogAnime>) => (
     <CatalogCard
@@ -120,7 +172,7 @@ export default function DiscoverTabScreen() {
       <LiquidBackground>
         <View style={styles.loadingState}>
           <ActivityIndicator size="large" color={theme.textPrimary} />
-          <Text style={[styles.loadingText, { color: theme.textPrimary }]}>Загружаю каталог...</Text>
+          <Text style={[styles.loadingText, { color: theme.textPrimary }]}>{t('online.loading')}</Text>
         </View>
       </LiquidBackground>
     );
@@ -136,6 +188,7 @@ export default function DiscoverTabScreen() {
         columnWrapperStyle={styles.gridRow}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         onRefresh={() => {
           void loadCatalog();
         }}
@@ -143,7 +196,7 @@ export default function DiscoverTabScreen() {
         ListHeaderComponent={
           <View style={styles.header}>
             <BlurView
-              intensity={40}
+              intensity={30}
               tint="dark"
               style={[styles.heroCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
               <Image
@@ -152,10 +205,10 @@ export default function DiscoverTabScreen() {
                 contentFit="cover"
               />
               <View style={styles.heroCopy}>
-                <Text style={[styles.eyebrow, { color: theme.textSecondary }]}>Premium catalog</Text>
-                <Text style={[styles.title, { color: theme.textPrimary }]}>Online</Text>
+                <Text style={[styles.eyebrow, { color: theme.textSecondary }]}>{t('discover.heroEyebrow')}</Text>
+                <Text style={[styles.title, { color: theme.textPrimary }]}>{t('tabs.discover')}</Text>
                 <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-                  Shikimori даёт метаданные, Kodik даёт озвучки и эпизоды. Открой тайтл и выбери нужный дуб.
+                  {t('discover.heroSubtitle')}
                 </Text>
               </View>
               <Pressable
@@ -171,47 +224,95 @@ export default function DiscoverTabScreen() {
               </Pressable>
             </BlurView>
 
-            <BlurView
-              intensity={40}
-              tint="dark"
-              style={[styles.searchCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
-              <Ionicons name="search-outline" size={18} color={theme.textSecondary} />
-              <TextInput
-                value={query}
-                onChangeText={setQuery}
-                onSubmitEditing={() => {
-                  void loadCatalog(query);
-                }}
-                placeholder="Поиск аниме..."
-                placeholderTextColor={theme.textMuted}
-                returnKeyType="search"
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={[styles.searchInput, { color: theme.textPrimary }]}
-              />
-              {query ? (
-                <Pressable
-                  onPress={() => {
-                    setQuery('');
-                    void loadCatalog('');
-                  }}
-                  style={[styles.searchAction, { backgroundColor: theme.surfaceStrong }]}>
-                  <Ionicons name="close" size={16} color={theme.textPrimary} />
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={() => {
+            <View style={styles.searchWrap}>
+              <BlurView
+                intensity={30}
+                tint="dark"
+                style={[styles.searchCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
+                <Ionicons name="search-outline" size={18} color={theme.textSecondary} />
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  onSubmitEditing={() => {
+                    setSuggestions([]);
                     void loadCatalog(query);
                   }}
-                  style={[styles.searchAction, { backgroundColor: theme.surfaceStrong }]}>
-                  <Ionicons name="arrow-forward" size={16} color={theme.textPrimary} />
-                </Pressable>
-              )}
-            </BlurView>
+                  placeholder={t('discover.searchPlaceholder')}
+                  placeholderTextColor={theme.textMuted}
+                  returnKeyType="search"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[styles.searchInput, { color: theme.textPrimary }]}
+                />
+                {query ? (
+                  <Pressable
+                    onPress={() => {
+                      setQuery('');
+                      setSuggestions([]);
+                      void loadCatalog('');
+                    }}
+                    style={[styles.searchAction, { backgroundColor: theme.surfaceStrong }]}>
+                    <Ionicons name="close" size={16} color={theme.textPrimary} />
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={() => {
+                      void loadCatalog(query);
+                    }}
+                    style={[styles.searchAction, { backgroundColor: theme.surfaceStrong }]}>
+                    <Ionicons name="arrow-forward" size={16} color={theme.textPrimary} />
+                  </Pressable>
+                )}
+              </BlurView>
+
+              {showSuggestions ? (
+                <View style={styles.searchDropdown}>
+                  <FlatList
+                    data={suggestions}
+                    keyExtractor={(item) => `suggestion-${item.id}`}
+                    keyboardShouldPersistTaps="handled"
+                    scrollEnabled={false}
+                    ListEmptyComponent={
+                      <View style={styles.suggestionEmpty}>
+                        <Text style={[styles.suggestionEmptyText, { color: theme.textSecondary }]}>
+                          {t('discover.suggestionsEmpty')}
+                        </Text>
+                      </View>
+                    }
+                    renderItem={({ item }) => (
+                      <Pressable
+                        onPress={() => {
+                          setQuery(item.title);
+                          setSuggestions([]);
+                          router.push({
+                            pathname: '/online/[id]',
+                            params: { id: String(item.id) },
+                          });
+                        }}
+                        style={styles.suggestionRow}>
+                        {item.posterUrl ? (
+                          <Image source={{ uri: item.posterUrl }} style={styles.suggestionThumb} contentFit="cover" />
+                        ) : (
+                          <View style={[styles.suggestionThumb, { backgroundColor: theme.surfaceStrong }]} />
+                        )}
+                        <View style={styles.suggestionCopy}>
+                          <Text style={[styles.suggestionTitle, { color: theme.textPrimary }]} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <Text style={[styles.suggestionMeta, { color: theme.textSecondary }]} numberOfLines={1}>
+                            {t('discover.episodesCount', { count: item.episodesAired || item.episodes || 0 })}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    )}
+                  />
+                </View>
+              ) : null}
+            </View>
 
             {error ? (
               <BlurView
-                intensity={40}
+                intensity={30}
                 tint="dark"
                 style={[styles.noticeCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
                 <Ionicons name="warning-outline" size={18} color={theme.warning} />
@@ -222,13 +323,13 @@ export default function DiscoverTabScreen() {
         }
         ListEmptyComponent={
           <BlurView
-            intensity={40}
+            intensity={30}
             tint="dark"
             style={[styles.emptyCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
             <Ionicons name="film-outline" size={28} color={theme.textPrimary} />
-            <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>Каталог пуст</Text>
+            <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>{t('discover.emptyTitle')}</Text>
             <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-              Сейчас Shikimori не вернул доступные тайтлы.
+              {t('discover.emptyCopy')}
             </Text>
           </BlurView>
         }
@@ -259,7 +360,7 @@ const styles = StyleSheet.create({
   },
   heroCard: {
     borderWidth: 1,
-    borderRadius: 28,
+    borderRadius: 16,
     padding: 18,
     overflow: 'hidden',
     flexDirection: 'row',
@@ -269,7 +370,7 @@ const styles = StyleSheet.create({
   heroIcon: {
     width: 64,
     height: 64,
-    borderRadius: 18,
+    borderRadius: 16,
   },
   heroCopy: {
     flex: 1,
@@ -296,10 +397,74 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  searchWrap: {
+    position: 'relative',
+    zIndex: 1,
+  },
+  searchCard: {
+    minHeight: 58,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  searchDropdown: {
+    position: 'absolute',
+    top: 60,
+    zIndex: 9999,
+    elevation: 10,
+    width: '100%',
+    backgroundColor: 'rgba(20,20,25,0.95)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden',
+  },
+  suggestionRow: {
+    minHeight: 60,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  suggestionThumb: {
+    width: 38,
+    height: 52,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  suggestionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  suggestionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  suggestionMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  suggestionEmpty: {
+    minHeight: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
+  suggestionEmptyText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   noticeCard: {
     minHeight: 52,
     borderWidth: 1,
-    borderRadius: 18,
+    borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
@@ -310,15 +475,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     lineHeight: 20,
-  },
-  searchCard: {
-    minHeight: 58,
-    borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
   },
   searchInput: {
     flex: 1,
@@ -341,7 +497,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   card: {
-    borderRadius: 22,
+    borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
   },
@@ -388,7 +544,7 @@ const styles = StyleSheet.create({
   emptyCard: {
     marginTop: 40,
     borderWidth: 1,
-    borderRadius: 24,
+    borderRadius: 16,
     padding: 24,
     alignItems: 'center',
     gap: 10,

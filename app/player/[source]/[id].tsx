@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { normalizePlayableUri } from '@/src/components/player/fullscreen-player';
 import { VideoPlayerScreen } from '@/src/components/player/video-player-screen';
 import { GlassCard } from '@/src/components/ui/glass-card';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
@@ -31,6 +32,10 @@ export default function PlayerScreen() {
   const parsedFilename = useMemo(
     () => (video ? parseImportedFilename(video.filename) : null),
     [video]
+  );
+  const playableUri = useMemo(
+    () => normalizePlayableUri((video?.uri || video?.remote_url || '').trim()),
+    [video?.remote_url, video?.uri]
   );
 
   const canLoad = useMemo(() => Number.isFinite(videoId) && videoId > 0, [videoId]);
@@ -110,10 +115,30 @@ export default function PlayerScreen() {
     );
   }
 
+  if (!playableUri || playableUri.trim() === '') {
+    return (
+      <LiquidBackground>
+        <View style={styles.centerState}>
+          <GlassCard style={styles.messageCard}>
+            <Text style={[styles.messageTitle, { color: theme.textPrimary }]}>{t('player.errorTitle')}</Text>
+            <Text style={[styles.messageCopy, { color: theme.textSecondary }]}>{t('player.emptyUrl')}</Text>
+            <Pressable
+              onPress={() => {
+                router.back();
+              }}
+              style={[styles.inlineButton, { backgroundColor: theme.surfaceStrong, borderColor: theme.cardBorder }]}>
+              <Text style={[styles.inlineButtonLabel, { color: theme.textPrimary }]}>{t('player.back')}</Text>
+            </Pressable>
+          </GlassCard>
+        </View>
+      </LiquidBackground>
+    );
+  }
+
   return (
     <VideoPlayerScreen
       media={{
-        uri: video.uri || video.remote_url || '',
+        uri: playableUri,
         progress: video.progress,
         duration: video.duration,
       }}

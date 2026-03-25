@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
+import { useTranslation } from 'react-i18next';
 
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
@@ -86,31 +87,27 @@ function EpisodeTile({
   onPress: () => void;
 }) {
   const { theme } = useApp();
+  const { t } = useTranslation();
 
   return (
     <Animated.View
-      entering={FadeInDown.delay(index * 24).springify()}
+      entering={FadeInDown.delay(index * 20).springify()}
       layout={LinearTransition.springify().damping(18).stiffness(180)}
       style={styles.episodeTileWrap}>
       <Pressable onPress={onPress}>
         <BlurView
-          intensity={40}
+          intensity={30}
           tint="dark"
           style={[styles.episodeTile, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
           <View style={[styles.episodeNumberBadge, { backgroundColor: theme.surfaceStrong }]}>
             <Text style={[styles.episodeNumberText, { color: theme.textPrimary }]}>{item.number}</Text>
           </View>
 
-          <View style={styles.episodeTileCopy}>
-            <Text style={[styles.episodeTileTitle, { color: theme.textPrimary }]} numberOfLines={2}>
-              {item.title || `Episode ${item.number}`}
-            </Text>
-            <Text style={[styles.episodeTileMeta, { color: theme.textSecondary }]} numberOfLines={1}>
-              Серия {item.number}
-            </Text>
-          </View>
+          <Text style={[styles.episodeTileTitle, { color: theme.textPrimary }]} numberOfLines={1}>
+            {item.title || t('online.episodeLabel', { value: item.number })}
+          </Text>
 
-          <Ionicons name="play-circle" size={24} color={theme.accentPrimary} />
+          <Ionicons name="play" size={16} color={theme.accentPrimary} />
         </BlurView>
       </Pressable>
     </Animated.View>
@@ -119,6 +116,7 @@ function EpisodeTile({
 
 export default function OnlineAnimeDetailScreen() {
   const { theme } = useApp();
+  const { t } = useTranslation();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const animeId = useMemo(() => resolveIdParam(params.id), [params.id]);
@@ -131,7 +129,7 @@ export default function OnlineAnimeDetailScreen() {
 
   const loadAnime = useCallback(async () => {
     if (!animeId) {
-      setError('Тайтл не найден.');
+      setError(t('online.loadTitleErrorCopy'));
       setLoading(false);
       return;
     }
@@ -162,11 +160,11 @@ export default function OnlineAnimeDetailScreen() {
       setTranslations([]);
       setSelectedDubId(null);
       setSelectedSeasonId(null);
-      setError('Не удалось загрузить тайтл или озвучки Kodik.');
+      setError(t('online.loadTitleErrorCopy'));
     } finally {
       setLoading(false);
     }
-  }, [animeId]);
+  }, [animeId, t]);
 
   useEffect(() => {
     void loadAnime();
@@ -190,11 +188,14 @@ export default function OnlineAnimeDetailScreen() {
   }, [activeTranslation, selectedSeasonId]);
 
   const activeSeason = useMemo(
-    () => activeTranslation?.seasons.find((season) => season.id === selectedSeasonId) ?? activeTranslation?.seasons[0] ?? null,
+    () =>
+      activeTranslation?.seasons.find((season) => season.id === selectedSeasonId) ??
+      activeTranslation?.seasons[0] ??
+      null,
     [activeTranslation, selectedSeasonId]
   );
 
-  const episodeColumns = width >= 1440 ? 5 : width >= 1180 ? 4 : width >= 860 ? 3 : 2;
+  const episodeColumns = width >= 1400 ? 7 : width >= 1180 ? 6 : width >= 900 ? 5 : width >= 680 ? 4 : 3;
   const wideLayout = width >= 1040;
 
   const renderEpisode = ({ item, index }: ListRenderItemInfo<KodikEpisode>) => (
@@ -212,7 +213,7 @@ export default function OnlineAnimeDetailScreen() {
           params: {
             url: resolvedLink,
             title: detail.title,
-            subtitle: `${activeTranslation?.title || 'Original'} • ${activeSeason?.label || 'Season 1'} • Episode ${item.number}`,
+            subtitle: `${activeTranslation?.title || t('online.dubs.original')} • ${activeSeason?.label || t('online.seasonsTitle')} • ${t('online.episodeLabel', { value: item.number })}`,
           },
         });
       }}
@@ -224,7 +225,7 @@ export default function OnlineAnimeDetailScreen() {
       <LiquidBackground>
         <View style={styles.loadingState}>
           <ActivityIndicator size="large" color={theme.textPrimary} />
-          <Text style={[styles.loadingText, { color: theme.textPrimary }]}>Загружаю каталог...</Text>
+          <Text style={[styles.loadingText, { color: theme.textPrimary }]}>{t('online.loading')}</Text>
         </View>
       </LiquidBackground>
     );
@@ -235,19 +236,19 @@ export default function OnlineAnimeDetailScreen() {
       <LiquidBackground>
         <View style={styles.loadingState}>
           <BlurView
-            intensity={40}
+            intensity={30}
             tint="dark"
             style={[styles.noticeCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
-            <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>Ошибка загрузки</Text>
+            <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>{t('online.loadTitleError')}</Text>
             <Text style={[styles.noticeBody, { color: theme.textSecondary }]}>
-              {error ?? 'Не удалось открыть тайтл.'}
+              {error ?? t('online.loadTitleErrorCopy')}
             </Text>
             <Pressable
               onPress={() => {
                 router.back();
               }}
               style={[styles.noticeAction, { backgroundColor: theme.surfaceStrong }]}>
-              <Text style={[styles.noticeActionLabel, { color: theme.textPrimary }]}>Назад</Text>
+              <Text style={[styles.noticeActionLabel, { color: theme.textPrimary }]}>{t('common.back')}</Text>
             </Pressable>
           </BlurView>
         </View>
@@ -274,11 +275,11 @@ export default function OnlineAnimeDetailScreen() {
               }}
               style={[styles.backButton, { backgroundColor: theme.surfaceStrong }]}>
               <Ionicons name="chevron-back" size={18} color={theme.textPrimary} />
-              <Text style={[styles.backButtonLabel, { color: theme.textPrimary }]}>Назад</Text>
+              <Text style={[styles.backButtonLabel, { color: theme.textPrimary }]}>{t('common.back')}</Text>
             </Pressable>
 
             <BlurView
-              intensity={40}
+              intensity={30}
               tint="dark"
               style={[
                 styles.heroCard,
@@ -309,7 +310,7 @@ export default function OnlineAnimeDetailScreen() {
 
                 <View style={styles.metaRow}>
                   <MetadataChip icon="star" label={detail.score} />
-                  <MetadataChip icon="film-outline" label={`${detail.episodes || detail.episodesAired || 0} eps`} />
+                  <MetadataChip icon="film-outline" label={String(detail.episodes || detail.episodesAired || 0)} />
                   <MetadataChip icon="layers-outline" label={detail.kind} />
                 </View>
 
@@ -330,11 +331,8 @@ export default function OnlineAnimeDetailScreen() {
             </BlurView>
 
             <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>Озвучка / Язык</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.selectorRow}>
+              <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.dubbingTitle')}</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.selectorRow}>
                 {translations.map((translation) => (
                   <SelectorChip
                     key={translation.id}
@@ -350,11 +348,8 @@ export default function OnlineAnimeDetailScreen() {
 
             {activeTranslation?.seasons.length ? (
               <View style={styles.section}>
-                <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>Сезоны / Франшиза</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.selectorRow}>
+                <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.seasonsTitle')}</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.selectorRow}>
                   {activeTranslation.seasons.map((season: KodikSeason) => (
                     <SelectorChip
                       key={season.id}
@@ -370,7 +365,7 @@ export default function OnlineAnimeDetailScreen() {
             ) : null}
 
             <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>Эпизоды</Text>
+              <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.episodesTitle')}</Text>
               <View style={[styles.counterBadge, { backgroundColor: theme.surfaceStrong }]}>
                 <Text style={[styles.counterBadgeLabel, { color: theme.textPrimary }]}>
                   {activeSeason?.episodes.length ?? 0}
@@ -381,12 +376,12 @@ export default function OnlineAnimeDetailScreen() {
         }
         ListEmptyComponent={
           <BlurView
-            intensity={40}
+            intensity={30}
             tint="dark"
             style={[styles.noticeCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
-            <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>Эпизоды недоступны</Text>
+            <Text style={[styles.noticeTitle, { color: theme.textPrimary }]}>{t('online.emptyEpisodesTitle')}</Text>
             <Text style={[styles.noticeBody, { color: theme.textSecondary }]}>
-              Kodik не вернул пригодные ссылки для этой озвучки или сезона.
+              {t('online.emptyEpisodesCopy')}
             </Text>
           </BlurView>
         }
@@ -419,7 +414,7 @@ const styles = StyleSheet.create({
   backButton: {
     alignSelf: 'flex-start',
     minHeight: 42,
-    borderRadius: 14,
+    borderRadius: 16,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
@@ -430,7 +425,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   heroCard: {
-    borderRadius: 28,
+    borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
     padding: 18,
@@ -443,7 +438,7 @@ const styles = StyleSheet.create({
   poster: {
     width: '100%',
     aspectRatio: 0.72,
-    borderRadius: 22,
+    borderRadius: 16,
   },
   posterWide: {
     width: 260,
@@ -514,7 +509,7 @@ const styles = StyleSheet.create({
     paddingRight: 6,
   },
   selectorChip: {
-    minHeight: 42,
+    minHeight: 40,
     borderRadius: 999,
     borderWidth: 1,
     paddingHorizontal: 16,
@@ -522,7 +517,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   selectorChipLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
   },
   sectionHeaderRow: {
@@ -532,7 +527,7 @@ const styles = StyleSheet.create({
   },
   counterBadge: {
     minWidth: 40,
-    minHeight: 32,
+    minHeight: 30,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -543,48 +538,40 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   episodeGridRow: {
-    gap: 12,
-    marginBottom: 12,
+    gap: 10,
+    marginBottom: 10,
   },
   episodeTileWrap: {
     flex: 1,
-    marginBottom: 12,
+    marginBottom: 10,
+    maxWidth: 104,
   },
   episodeTile: {
-    minHeight: 108,
-    borderRadius: 20,
+    aspectRatio: 1,
+    borderRadius: 16,
     borderWidth: 1,
-    padding: 14,
-    flexDirection: 'row',
+    padding: 10,
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'space-between',
   },
   episodeNumberBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   episodeNumberText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '900',
   },
-  episodeTileCopy: {
-    flex: 1,
-    gap: 6,
-  },
   episodeTileTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    lineHeight: 20,
-  },
-  episodeTileMeta: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   noticeCard: {
-    borderRadius: 24,
+    borderRadius: 16,
     borderWidth: 1,
     padding: 22,
     gap: 10,
@@ -601,7 +588,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     alignSelf: 'flex-start',
     minHeight: 42,
-    borderRadius: 14,
+    borderRadius: 16,
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',

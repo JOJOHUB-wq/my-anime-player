@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { VideoPlayerScreen } from '@/src/components/player/video-player-screen';
@@ -12,6 +13,7 @@ function resolveParam(value?: string | string[]) {
 
 export default function WebviewPlayerScreen() {
   const { theme } = useApp();
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{
     url?: string | string[];
     title?: string | string[];
@@ -26,16 +28,16 @@ export default function WebviewPlayerScreen() {
       <View style={styles.root}>
         <SafeAreaView style={styles.overlay}>
           <View style={[styles.messageCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBackground }]}>
-            <Text style={[styles.messageTitle, { color: theme.textPrimary }]}>Ошибка плеера</Text>
+            <Text style={[styles.messageTitle, { color: theme.textPrimary }]}>{t('player.missingLinkTitle')}</Text>
             <Text style={[styles.messageCopy, { color: theme.textSecondary }]}>
-              Плеер не получил ссылку на Kodik.
+              {t('player.missingKodikLink')}
             </Text>
             <Pressable
               onPress={() => {
                 router.back();
               }}
               style={[styles.backButtonInline, { borderColor: theme.cardBorder, backgroundColor: theme.surfaceMuted }]}>
-              <Text style={[styles.backButtonInlineLabel, { color: theme.textPrimary }]}>Назад</Text>
+              <Text style={[styles.backButtonInlineLabel, { color: theme.textPrimary }]}>{t('common.back')}</Text>
             </Pressable>
           </View>
         </SafeAreaView>

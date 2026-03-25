@@ -1,6 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import * as ScreenOrientation from 'expo-screen-orientation';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GestureResponderEvent,
@@ -9,7 +7,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import Animated, {
@@ -18,13 +15,9 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import {
-  isPictureInPictureSupported,
-  useVideoPlayer,
-  VideoView,
-  type VideoPlayer,
-} from 'expo-video';
+import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 
 import { useApp } from '@/src/providers/app-provider';
 
@@ -48,8 +41,6 @@ type PlayerSnapshot = {
   playing: boolean;
 };
 
-const PLAYER_RED = '#FF3040';
-
 type FullscreenPlayerProps = {
   media: PlayableMedia;
   title?: string;
@@ -61,6 +52,8 @@ type FullscreenPlayerProps = {
   syncCommand?: PlaybackSyncCommand | null;
   onPlaybackEvent?: (event: PlaybackSyncCommand) => Promise<void> | void;
 };
+
+const PLAYER_RED = '#FF0000';
 
 function formatClock(seconds: number) {
   if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -91,7 +84,61 @@ function readSnapshot(player: VideoPlayer): PlayerSnapshot | null {
   }
 }
 
-export function FullscreenPlayer({
+export function normalizePlayableUri(uri: string) {
+  if (!uri) {
+    return uri;
+  }
+
+  if (
+    uri.startsWith('file://') ||
+    uri.startsWith('http://') ||
+    uri.startsWith('https://') ||
+    uri.startsWith('content://') ||
+    uri.startsWith('blob:')
+  ) {
+    return uri;
+  }
+
+  return `file://${uri}`;
+}
+
+function PlayerErrorState({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => Promise<void> | void;
+}) {
+  const { theme } = useApp();
+  const { t } = useTranslation();
+
+  return (
+    <View style={styles.root}>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.errorCard}>
+          <Text style={[styles.errorTitle, { color: theme.textPrimary }]}>{t('player.errorTitle')}</Text>
+          <Text style={[styles.errorCopy, { color: theme.textSecondary }]}>{message}</Text>
+          <Pressable onPress={() => { void onClose(); }} style={styles.errorButton}>
+            <Text style={[styles.errorButtonLabel, { color: theme.textPrimary }]}>{t('player.back')}</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    </View>
+  );
+}
+
+export function FullscreenPlayer(props: FullscreenPlayerProps) {
+  const { t } = useTranslation();
+  const playableUri = useMemo(() => normalizePlayableUri(props.media.uri), [props.media.uri]);
+
+  if (!playableUri || playableUri.trim() === '') {
+    return <PlayerErrorState message={t('player.emptyUrl')} onClose={props.onClose} />;
+  }
+
+  return <FullscreenPlayerContent {...props} media={{ ...props.media, uri: playableUri }} />;
+}
+
+function FullscreenPlayerContent({
   media,
   title,
   subtitle,
@@ -103,12 +150,11 @@ export function FullscreenPlayer({
   onPlaybackEvent,
 }: FullscreenPlayerProps) {
   const { theme } = useApp();
-  const { width } = useWindowDimensions();
+  const { t } = useTranslation();
   const [position, setPosition] = useState(media.progress ?? 0);
   const [duration, setDuration] = useState(media.duration ?? 0);
   const [isPlaying, setIsPlaying] = useState(autoPlay);
   const [showControls, setShowControls] = useState(true);
-  const [isExpanded, setIsExpanded] = useState(true);
   const [skipFeedback, setSkipFeedback] = useState<string | null>(null);
   const controlsOpacity = useSharedValue(1);
   const feedbackOpacity = useSharedValue(0);
@@ -116,11 +162,9 @@ export function FullscreenPlayer({
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistAtRef = useRef(0);
   const progressTrackWidthRef = useRef(1);
-  const videoViewRef = useRef<VideoView | null>(null);
   const finishedRef = useRef(false);
   const lastAppliedSyncIdRef = useRef<string | null>(null);
-  const railWidth = Math.min(width - 28, width >= 1280 ? 940 : width >= 900 ? 780 : 680);
-  const isDesktopLike = width >= 960;
+  const playableUri = useMemo(() => normalizePlayableUri(media.uri), [media.uri]);
 
   const overlayStyle = useAnimatedStyle(() => ({
     opacity: controlsOpacity.value,
@@ -130,19 +174,11 @@ export function FullscreenPlayer({
     opacity: feedbackOpacity.value,
   }));
 
-  const pipSupported = useMemo(() => {
-    try {
-      return isPictureInPictureSupported();
-    } catch {
-      return false;
-    }
-  }, []);
-
   const player = useVideoPlayer(
     {
-      uri: media.uri,
+      uri: playableUri,
       headers: media.headers,
-      contentType: media.uri.includes('.m3u8') ? 'hls' : 'auto',
+      contentType: playableUri.includes('.m3u8') ? 'hls' : 'auto',
       metadata: {
         title,
         artist: subtitle,
@@ -158,6 +194,22 @@ export function FullscreenPlayer({
       }
     }
   );
+
+  useEffect(() => {
+    const subscription = player.addListener('statusChange', (event) => {
+      if (event.status === 'error' || event.error) {
+        console.error('Video playback error:', {
+          uri: playableUri,
+          error: event.error,
+          status: event.status,
+        });
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [playableUri, player]);
 
   const persistSnapshot = useCallback(
     async (snapshot: PlayerSnapshot) => {
@@ -262,7 +314,7 @@ export function FullscreenPlayer({
     try {
       player.currentTime = syncCommand.currentTime;
     } catch {
-      // Ignore desync jitter and continue applying state.
+      // Ignore sync jitter and continue.
     }
 
     setPosition(syncCommand.currentTime);
@@ -338,6 +390,7 @@ export function FullscreenPlayer({
           nextPosition = Math.max(0, Math.min(duration, nextTime));
           return nextPosition;
         }
+
         nextPosition = Math.max(0, nextTime);
         return nextPosition;
       });
@@ -400,34 +453,6 @@ export function FullscreenPlayer({
     [seekToRatio]
   );
 
-  const handleToggleFullscreen = useCallback(async () => {
-    const nextExpanded = !isExpanded;
-    setIsExpanded(nextExpanded);
-
-    if (nextExpanded) {
-      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-    } else {
-      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-    }
-
-    revealControls();
-  }, [isExpanded, revealControls]);
-
-  const handleStartPictureInPicture = useCallback(async () => {
-    revealControls();
-
-    if (!pipSupported || !videoViewRef.current) {
-      showTransientFeedback('PiP');
-      return;
-    }
-
-    try {
-      await videoViewRef.current.startPictureInPicture();
-    } catch {
-      showTransientFeedback('PiP');
-    }
-  }, [pipSupported, revealControls, showTransientFeedback]);
-
   useEffect(() => {
     if (Platform.OS !== 'web') {
       return;
@@ -458,12 +483,6 @@ export function FullscreenPlayer({
         return;
       }
 
-      if (event.key.toLowerCase() === 'f') {
-        event.preventDefault();
-        void handleToggleFullscreen();
-        return;
-      }
-
       if (event.key === 'Escape') {
         event.preventDefault();
         void handleClose();
@@ -474,242 +493,85 @@ export function FullscreenPlayer({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleClose, handleSeekBy, handleToggleFullscreen, togglePlayback]);
+  }, [handleClose, handleSeekBy, togglePlayback]);
 
   const progressRatio = duration > 0 ? Math.max(0, Math.min(position / duration, 1)) : 0;
 
   return (
     <View style={styles.root}>
       <VideoView
-        ref={videoViewRef}
         style={styles.video}
         player={player}
         nativeControls={false}
         contentFit="contain"
-        allowsPictureInPicture
-        startsPictureInPictureAutomatically={false}
       />
 
       <Pressable onPress={handleScreenPress} style={StyleSheet.absoluteFill} />
 
       {skipFeedback ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.feedbackBubble,
-            feedbackStyle,
-            {
-              backgroundColor: theme.cardBackground,
-              borderColor: theme.cardBorder,
-            },
-          ]}>
-          <Text style={[styles.feedbackText, { color: theme.textPrimary }]}>{skipFeedback}</Text>
+        <Animated.View pointerEvents="none" style={[styles.feedbackBubble, feedbackStyle]}>
+          <Text style={styles.feedbackText}>{skipFeedback}</Text>
         </Animated.View>
       ) : null}
 
-      <Animated.View
-        pointerEvents={showControls ? 'box-none' : 'none'}
-        style={[styles.overlay, overlayStyle]}>
+      <Animated.View pointerEvents={showControls ? 'box-none' : 'none'} style={[styles.overlay, overlayStyle]}>
         <SafeAreaView style={styles.safeArea} pointerEvents="box-none">
-          <View style={styles.topBar} pointerEvents="box-none">
-            <BlurView
-              intensity={42}
-              tint="dark"
-              style={[
-                styles.topBarCard,
-                {
-                  backgroundColor: theme.cardBackground,
-                  borderColor: theme.cardBorder,
-                },
-              ]}>
-              <Pressable
-                onPress={() => {
-                  void handleClose();
-                }}
-                style={[
-                  styles.iconButton,
-                  styles.topBackButton,
-                  {
-                    backgroundColor: theme.surfaceMuted,
-                    borderColor: theme.cardBorder,
-                  },
-                ]}>
-                <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
-              </Pressable>
+          <View style={styles.topBar}>
+            <Pressable onPress={() => { void handleClose(); }} style={styles.topButton}>
+              <MaterialIcons name="arrow-back" size={22} color={theme.textPrimary} />
+            </Pressable>
 
-              <View style={styles.titleWrap}>
-                {title ? (
-                  <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>
-                    {title}
-                  </Text>
-                ) : null}
-                {subtitle ? (
-                  <Text style={[styles.subtitle, { color: theme.textSecondary }]} numberOfLines={1}>
-                    {subtitle}
-                  </Text>
-                ) : null}
-              </View>
-            </BlurView>
+            <View style={styles.topCopy}>
+              {title ? (
+                <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>
+                  {title}
+                </Text>
+              ) : null}
+              {subtitle ? (
+                <Text style={[styles.subtitle, { color: theme.textSecondary }]} numberOfLines={1}>
+                  {subtitle}
+                </Text>
+              ) : null}
+            </View>
+
+            <Pressable style={styles.hostButton}>
+              <MaterialIcons name="groups" size={20} color={theme.textPrimary} />
+              <Text style={[styles.hostButtonLabel, { color: theme.textPrimary }]}>{t('player.hostRoom')}</Text>
+            </Pressable>
           </View>
 
-          <View style={styles.centerControls} pointerEvents="box-none">
-            <BlurView
-              intensity={44}
-              tint="dark"
-              style={[
-                styles.centerControlsBar,
-                { width: railWidth },
-                {
-                  backgroundColor: theme.cardBackground,
-                  borderColor: theme.cardBorder,
-                },
-              ]}>
-              <Pressable
-                onPress={() => {
-                  handleSeekBy(-15);
-                }}
-                style={[
-                  styles.centerButton,
-                  {
-                    backgroundColor: theme.surfaceMuted,
-                    borderColor: theme.cardBorder,
-                  },
-                ]}>
-                <Ionicons name="play-back" size={22} color={theme.textPrimary} />
-                <Text style={[styles.centerButtonLabel, { color: theme.textPrimary }]}>15</Text>
-              </Pressable>
+          <View style={styles.centerControls}>
+            <Pressable onPress={() => { handleSeekBy(-15); }} style={styles.skipButton}>
+              <MaterialIcons name="replay-10" size={28} color="#FFFFFF" />
+              <Text style={styles.skipLabel}>15</Text>
+            </Pressable>
 
-              <Pressable
-                onPress={togglePlayback}
-                style={[
-                  styles.playPauseButton,
-                  {
-                    backgroundColor: PLAYER_RED,
-                    borderColor: 'rgba(255,255,255,0.22)',
-                  },
-                ]}>
-                <Ionicons
-                  name={isPlaying ? 'pause' : 'play'}
-                  size={28}
-                  color="#FFFFFF"
-                />
-              </Pressable>
+            <Pressable onPress={togglePlayback} style={styles.playButton}>
+              <MaterialIcons name={isPlaying ? 'pause' : 'play-arrow'} size={40} color="#FFFFFF" />
+            </Pressable>
 
-              <Pressable
-                onPress={() => {
-                  handleSeekBy(15);
-                }}
-                style={[
-                  styles.centerButton,
-                  {
-                    backgroundColor: theme.surfaceMuted,
-                    borderColor: theme.cardBorder,
-                  },
-                ]}>
-                <Ionicons name="play-forward" size={22} color={theme.textPrimary} />
-                <Text style={[styles.centerButtonLabel, { color: theme.textPrimary }]}>15</Text>
-              </Pressable>
-            </BlurView>
+            <Pressable onPress={() => { handleSeekBy(15); }} style={styles.skipButton}>
+              <MaterialIcons name="forward-10" size={28} color="#FFFFFF" />
+              <Text style={styles.skipLabel}>15</Text>
+            </Pressable>
           </View>
 
-          <View style={styles.bottomBarWrap} pointerEvents="box-none">
-            <BlurView
-              intensity={42}
-              tint="dark"
-              style={[
-                styles.bottomBar,
-                { width: railWidth, alignSelf: 'center' },
-                {
-                  backgroundColor: theme.cardBackground,
-                  borderColor: theme.cardBorder,
-                },
-              ]}>
-              <View
-                onLayout={handleProgressTrackLayout}
-                onStartShouldSetResponder={() => true}
-                onMoveShouldSetResponder={() => true}
-                onResponderGrant={handleProgressTrackPress}
-                onResponderMove={handleProgressTrackPress}
-                style={[styles.progressTrack, { backgroundColor: theme.surfaceMuted }]}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      width: `${progressRatio * 100}%`,
-                      backgroundColor: PLAYER_RED,
-                    },
-                  ]}
-                />
-                <View
-                  style={[
-                    styles.progressThumb,
-                    {
-                      left: `${progressRatio * 100}%`,
-                      backgroundColor: '#FFFFFF',
-                      borderColor: PLAYER_RED,
-                    },
-                  ]}
-                />
-              </View>
+          <View style={styles.bottomDock}>
+            <View style={styles.timeRow}>
+              <Text style={[styles.timeText, { color: theme.textPrimary }]}>{formatClock(position)}</Text>
+              <Text style={[styles.timeText, { color: theme.textPrimary }]}>{formatClock(duration)}</Text>
+            </View>
 
-              <View style={styles.timelineHeader}>
-                <Text style={[styles.timeText, { color: theme.textSecondary }]}>
-                  {formatClock(position)}
-                </Text>
-                <Text style={[styles.timeText, { color: theme.textSecondary }]}>
-                  {formatClock(duration)}
-                </Text>
-              </View>
-
-              <View style={styles.bottomActions}>
-                {isDesktopLike ? (
-                  <View
-                    style={[
-                      styles.shortcutHint,
-                      {
-                        backgroundColor: theme.surfaceMuted,
-                        borderColor: theme.cardBorder,
-                      },
-                    ]}>
-                    <Text style={[styles.shortcutHintText, { color: theme.textSecondary }]}>
-                      Space / ← / → / F
-                    </Text>
-                  </View>
-                ) : null}
-                <Pressable
-                  onPress={() => {
-                    void handleStartPictureInPicture();
-                  }}
-                  style={[
-                    styles.bottomSmallButton,
-                    {
-                      backgroundColor: theme.surfaceMuted,
-                      borderColor: theme.cardBorder,
-                      opacity: pipSupported ? 1 : 0.55,
-                    },
-                  ]}>
-                  <Ionicons name="contract-outline" size={18} color={theme.textPrimary} />
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    void handleToggleFullscreen();
-                  }}
-                  style={[
-                    styles.bottomSmallButton,
-                    {
-                      backgroundColor: theme.surfaceMuted,
-                      borderColor: theme.cardBorder,
-                    },
-                  ]}>
-                  <Ionicons
-                    name={isExpanded ? 'contract' : 'expand'}
-                    size={18}
-                    color={theme.textPrimary}
-                  />
-                </Pressable>
-              </View>
-            </BlurView>
+            <View
+              onLayout={handleProgressTrackLayout}
+              onStartShouldSetResponder={() => true}
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={handleProgressTrackPress}
+              onResponderMove={handleProgressTrackPress}
+              style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${progressRatio * 100}%` }]} />
+              <View style={[styles.progressThumb, { left: `${progressRatio * 100}%` }]} />
+            </View>
           </View>
         </SafeAreaView>
       </Animated.View>
@@ -722,12 +584,48 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
+  errorCard: {
+    margin: 24,
+    marginTop: 'auto',
+    marginBottom: 'auto',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(10,10,12,0.78)',
+    padding: 20,
+    gap: 10,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  errorCopy: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  errorButton: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    minHeight: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorButtonLabel: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
   video: {
     flex: 1,
     backgroundColor: '#000000',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   safeArea: {
     flex: 1,
@@ -738,24 +636,17 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+  },
+  topButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  topBarCard: {
-    width: '100%',
-    maxWidth: 920,
-    borderRadius: 26,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    overflow: 'hidden',
-  },
-  topBackButton: {
-    flexShrink: 0,
-  },
-  titleWrap: {
+  topCopy: {
     flex: 1,
     minWidth: 0,
   },
@@ -768,139 +659,94 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
-  centerControls: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  centerControlsBar: {
+  hostButton: {
+    minHeight: 42,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 18,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-    overflow: 'hidden',
+    gap: 6,
   },
-  centerButton: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-  },
-  playPauseButton: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: PLAYER_RED,
-    shadowOpacity: 0.32,
-    shadowRadius: 18,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    elevation: 10,
-  },
-  centerButtonLabel: {
+  hostButtonLabel: {
     fontSize: 12,
     fontWeight: '800',
   },
-  feedbackBubble: {
-    position: 'absolute',
-    top: '20%',
-    alignSelf: 'center',
-    minWidth: 88,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 18,
-    borderWidth: 1,
-    alignItems: 'center',
-  },
-  feedbackText: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  bottomBarWrap: {
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-  },
-  bottomBar: {
-    borderRadius: 24,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    overflow: 'hidden',
-  },
-  timelineHeader: {
-    marginTop: 10,
+  centerControls: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 24,
+  },
+  skipButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  skipLabel: {
+    marginTop: 2,
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  playButton: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bottomDock: {
+    paddingHorizontal: 14,
+    paddingBottom: 8,
+  },
+  timeRow: {
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   timeText: {
     fontSize: 12,
     fontWeight: '700',
   },
   progressTrack: {
-    height: 4,
+    height: 3,
     borderRadius: 999,
-    overflow: 'visible',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.22)',
   },
   progressFill: {
     height: '100%',
     borderRadius: 999,
+    backgroundColor: PLAYER_RED,
   },
   progressThumb: {
     position: 'absolute',
-    top: -6,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    marginLeft: -8,
-    borderWidth: 3,
+    top: -4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginLeft: -5,
+    backgroundColor: PLAYER_RED,
   },
-  bottomActions: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
-  },
-  shortcutHint: {
-    minHeight: 40,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shortcutHintText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  bottomSmallButton: {
-    width: 44,
-    height: 44,
+  feedbackBubble: {
+    position: 'absolute',
+    top: '18%',
+    alignSelf: 'center',
+    minWidth: 88,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
     borderRadius: 16,
-    borderWidth: 1,
+    backgroundColor: 'rgba(0,0,0,0.66)',
     alignItems: 'center',
-    justifyContent: 'center',
+  },
+  feedbackText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

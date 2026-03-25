@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { FullscreenPlayer, type PlayableMedia } from '@/src/components/player/fullscreen-player';
+import { FullscreenPlayer, normalizePlayableUri, type PlayableMedia } from '@/src/components/player/fullscreen-player';
 import { KodikPlayerSurface } from './kodik-player-surface';
 import { useApp } from '@/src/providers/app-provider';
 
@@ -41,6 +42,7 @@ function KodikWebViewPlayer({
   onClose,
 }: Pick<VideoPlayerScreenProps, 'media' | 'title' | 'subtitle' | 'onClose'>) {
   const { theme } = useApp();
+  const { t } = useTranslation();
 
   return (
     <View style={styles.root}>
@@ -48,7 +50,7 @@ function KodikWebViewPlayer({
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
         <BlurView
-          intensity={44}
+          intensity={30}
           tint="dark"
           style={[
             styles.topBar,
@@ -67,7 +69,7 @@ function KodikWebViewPlayer({
 
           <View style={styles.titleWrap}>
             <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>
-              {title || 'Kodik Player'}
+              {title || t('player.missingLinkTitle')}
             </Text>
             {subtitle ? (
               <Text style={[styles.subtitle, { color: theme.textSecondary }]} numberOfLines={1}>
@@ -82,11 +84,44 @@ function KodikWebViewPlayer({
 }
 
 export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
-  if (shouldUseWebView(props.media.uri)) {
-    return <KodikWebViewPlayer {...props} />;
+  const { theme } = useApp();
+  const { t } = useTranslation();
+  const normalizedUri = normalizePlayableUri(props.media.uri);
+
+  if (!normalizedUri || normalizedUri.trim() === '') {
+    return (
+      <View style={styles.root}>
+        <SafeAreaView style={styles.overlay}>
+          <BlurView
+            intensity={30}
+            tint="dark"
+            style={[
+              styles.errorCard,
+              {
+                borderColor: theme.cardBorder,
+                backgroundColor: theme.cardBackground,
+              },
+            ]}>
+            <Text style={[styles.title, { color: theme.textPrimary }]}>{t('player.errorTitle')}</Text>
+            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{t('player.emptyUrl')}</Text>
+            <Pressable
+              onPress={() => {
+                void props.onClose();
+              }}
+              style={[styles.iconButton, { backgroundColor: theme.surfaceMuted }]}>
+              <Ionicons name="chevron-back" size={20} color={theme.textPrimary} />
+            </Pressable>
+          </BlurView>
+        </SafeAreaView>
+      </View>
+    );
   }
 
-  return <FullscreenPlayer {...props} />;
+  if (shouldUseWebView(normalizedUri)) {
+    return <KodikWebViewPlayer {...props} media={{ ...props.media, uri: normalizedUri }} />;
+  }
+
+  return <FullscreenPlayer {...props} media={{ ...props.media, uri: normalizedUri }} />;
 }
 
 const styles = StyleSheet.create({
@@ -101,12 +136,20 @@ const styles = StyleSheet.create({
   },
   topBar: {
     minHeight: 64,
-    borderRadius: 22,
+    borderRadius: 16,
     borderWidth: 1,
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+  },
+  errorCard: {
+    marginTop: 'auto',
+    marginBottom: 'auto',
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
     gap: 12,
   },
   iconButton: {
