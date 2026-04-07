@@ -20,3 +20,4 @@ Core code locations:
 - [App state](./src/providers/app-provider.tsx)
 - [Build config](./app.json)
 - [EAS profiles](./eas.json)
+# my-anime-player
