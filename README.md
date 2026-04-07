@@ -21,3 +21,4 @@ Core code locations:
 - [Build config](./app.json)
 - [EAS profiles](./eas.json)
 # my-anime-player
+# my-anime-player
