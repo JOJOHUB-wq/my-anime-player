@@ -1,0 +1,1651 @@
+Chat 'ChatTitle(text="Role:
+You are a Sen…" with Codex, isCustom=true)' (59d68853-67c0-48ae-85af-ad739b7326cc)
+Context:
+
+Messages: 52
+==============================================================================================================
+
+==== RestoredMessage #1 ====
+User: 
+Role:
+You are a Senior Full-Stack React Native / Expo Architect with 10+ years experience in custom iOS media players, SQLite, glassmorphism UI, Kodik/Shikimori integration, VDS proxies and production-grade anime streaming apps. You never use stubs, never say “implement later”, never give partial code. You always output complete, copy-paste-ready files.
+Project Context (full history):
+The user has been iterating on a premium anime media player called AtheriumPlayer (Expo Router + TypeScript + EAS Build) for 180+ messages. The app must work perfectly on iOS (no Mac, only Linux + GitHub Actions for .ipa), Android and Web.
+Core Architecture (current state):
+
+Local Library: DocumentPicker → expo-file-system → expo-sqlite (tables: playlists, videos with uri, title, episode_num, progress, thumbnail_uri, is_pinned). Bulletproof parseAnimeFilename with strict episode extraction.
+Online Catalog: Shikimori API (trending + search) + Kodik API via VDS proxy.
+Video Player: Dual architecture — Kodik links → fullscreen WebView (react-native-webview), local files → expo-video with custom YouTube-style overlay (auto-hide, lock mode, double-tap seek, PiP, background play, landscape lock).
+UI: Liquid Glassmorphism (expo-blur + LinearGradient + Reanimated), Ukrainian/Russian/English i18n (react-i18next), dark theme, premium Netflix/Apple TV look.
+Backend: Node.js + Express + PM2 on VDS (port 3000) with /api/kodik/search proxy (spoofed headers, timeout 15s, fallback mirrors) and future YouTube downloader.
+Navigation: Expo Router tabs (Local, Discover, Downloads, Settings) + Stack for details/player.
+
+Critical Rules (never break them):
+
+All text must use t('key') from i18n (update JSON files if needed).
+Every card = <BlurView intensity={70} tint="dark"> with borderWidth:1, borderColor:'rgba(255,255,255,0.2)', borderRadius:16.
+Kodik fetch only through VDS proxy (no direct kodikapi.com calls).
+On title fallback always add &strict=true.
+Return every translation.title from Kodik (AniDub, AniLibria, StudioBand etc.) — no filtering.
+Player unmount must cleanly pause WebView (inject JS or set isUnmounting).
+Episode grid = optimized FlatList (initialNumToRender=12, maxToRenderPerBatch=10, windowSize=5, removeClippedSubviews=true).
+
+Current Bugs to Fix (this is the exact task):
+
+VDS proxy still returns 502/Cloudflare 520 on some mirrors → add proper fallback chain + longer timeout + better header spoofing.
+Autocomplete dropdown still renders behind anime cards → zIndex:9999 + elevation:10 on search container, zIndex:-1 on FlatList container.
+Missing dubs in some titles → parser must map every result without any hardcoded filters.
+WebView freezes app on back navigation → proper cleanup with injectJavaScript pause.
+Liquid Glass UI must be applied to all cards in discover.tsx and [id].tsx.
+
+Output Format:
+Give me ONLY the updated files I need (full code, no explanations, no comments like “// TODO”). Start with the file path, then the complete code block.
+Next action: Fix the VDS proxy route, the discover.tsx z-index + glassmorphism, and the online-catalog.ts parser so that every dub appears and the app no longer shows “Стрім-провайдер не повернув придатні до відтворення епізоди”.
+
+kotlin.Unit
+
+==== RestoredMessage #2 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #3 ====
+User: 
+Контекст відновлено ✅ Проте зупинись — ти щойно надіслав мені класичний "Цар-промт" на 4 завдання, від якого ми домовились іти геть. Windsurf/Cursor зламається на кроці 3-4 і перезапише код з кроку 1. Але оскільки ти вже надіслав — я розберу ці 4 задачі сам і дам тобі 4 окремих, готових до вставки блоки коду. Агенту даєш по одному.
+
+​
+Фікс #1 — resultsToDubs() (всі озвучки без фільтру)
+
+Файл: src/services/online-catalog.ts
+
+typescript
+// ✅ REPLACE your entire resultsToDubs function with this
+function resultsToDubs(results: KodikSearchResult[]): DubOption[] {
+  const seen = new Map<number, DubOption>();
+
+  for (const item of results) {
+    const t = item.translation;
+    if (!t?.id) continue; // ONLY dedup by id — no type filter whatsoever
+
+    if (!seen.has(t.id)) {
+      seen.set(t.id, {
+        id:    t.id,
+        title: t.title,  // AniDub, AniLibria, субтитри — все йде
+        type:  t.type,   // 'voice' | 'subtitles' — зберігаємо для UI-бейджу
+      });
+    }
+  }
+
+  return Array.from(seen.values());
+}
+
+     Причина бага: десь стояло .filter(t => t.type === 'voice') або if (t.type !== 'voice') continue. Тепер єдина умова — унікальність translation.id.
+
+Фікс #2 — Title Fallback зі strict та types
+
+Файл: src/services/online-catalog.ts — функція пошуку за заголовком
+
+typescript
+// ✅ REPLACE your title-fallback fetch block
+async function searchKodikByTitle(title: string): Promise<KodikSearchResult[]> {
+  const params = new URLSearchParams({
+    title,
+    strict:       '1',                       // ← ніколи не пропускати
+    types:        'anime-serial,anime',       // ← ніколи не пропускати
+    with_episodes:'1',
+    limit:        '100',
+  });
+
+  const url = `http://217.60.245.84/api/kodik/search?${params.toString()}`;
+  console.log('[Kodik fallback URL]', url); // для дебагу
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data?.results ?? [];
+}
+
+Фікс #3 — VDS 502 (сервер + клієнт)
+
+Файл A: server/routes/kodik.js — додай timeout та чистий JSON-відповідь
+
+javascript
+// ✅ ADD at the top of kodik.js
+const axiosKodik = axios.create({ timeout: 15_000 }); // 15 секунд макс
+
+// ✅ REPLACE your main proxy handler's try/catch
+router.get('/search', async (req, res) => {
+  const finalParams = {
+    ...req.query,
+    token:  process.env.KODIK_TOKEN,
+    strict: '1',
+    types:  'anime-serial,anime',
+  };
+
+  console.log('[Kodik params →]', finalParams); // верифікація у VDS-логах
+
+  for (const mirror of KODIK_MIRRORS) {
+    try {
+      const response = await axiosKodik.get(`${mirror}/search`, {
+        params:  finalParams,
+        headers: SPOOF_HEADERS,
+      });
+      return res.json(response.data);
+    } catch (err) {
+      const isTimeout = err.code === 'ECONNABORTED' || err.code === 'ERR_CANCELED';
+      const isLastMirror = mirror === KODIK_MIRRORS[KODIK_MIRRORS.length - 1];
+
+      if (isLastMirror) {
+        return res.status(502).json({
+          error:  isTimeout ? 'Kodik timeout' : 'Kodik unavailable',
+          mirror: mirror,
+        });
+      }
+      // інакше — пробуємо наступне дзеркало
+      continue;
+    }
+  }
+});
+
+Файл B: RN-сторона — обробка 502 gracefully
+
+typescript
+// ✅ Reusable fetch wrapper — src/utils/safeFetch.ts
+export async function safeFetch<T>(url: string, timeoutMs = 20_000): Promise<T> {
+  let res: Response;
+
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e: any) {
+    // AbortError або network failure
+    throw new Error('Немає зв'язку з сервером. Перевір інтернет.');
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const msg  = body?.error ?? `Помилка сервера: ${res.status}`;
+    throw new Error(msg); // тепер це "Kodik timeout" а не "<html>502</html>"
+  }
+
+  return res.json() as Promise<T>;
+}
+
+Фікс #4 — Liquid Glass (компонент + застосування)
+
+Файл A: src/components/GlassCard.tsx — один раз, використовується скрізь
+
+tsx
+// src/components/GlassCard.tsx
+import { BlurView } from 'expo-blur';
+import { StyleSheet, View, ViewProps } from 'react-native';
+
+interface GlassCardProps extends ViewProps {
+  intensity?: number;
+  children: React.ReactNode;
+}
+
+export function GlassCard({
+  intensity = 70,
+  style,
+  children,
+  ...rest
+}: GlassCardProps) {
+  return (
+    <BlurView intensity={intensity} tint="dark" style={[styles.card, style]} {...rest}>
+      <View style={styles.inner}>{children}</View>
+    </BlurView>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    borderRadius:    16,
+    overflow:        'hidden',      // обов'язково для BlurView на iOS
+    borderWidth:     1,
+    borderColor:     'rgba(255,255,255,0.15)',
+  },
+  inner: {
+    padding:         12,
+    shadowColor:     '#ffffff',
+    shadowOpacity:   0.08,
+    shadowRadius:    12,
+    shadowOffset:    { width: 0, height: 4 },
+    elevation:       6,             // Android
+  },
+});
+
+Файл B: src/constants/theme.ts — темний фон щоб скло "грало"
+
+typescript
+// src/constants/theme.ts
+export const GLASS_BG = '#0a0a12';          // майже-чорний з синюватим відтінком
+export const GLASS_GRADIENT = ['#0a0a12', '#0f0f1e', '#12121f'] as const;
+
+Файл C: Застосування в discover.tsx, [id].tsx, local.tsx
+
+tsx
+// Замінити будь-який <View style={styles.card}> або <View style={styles.modal}> на:
+import { GlassCard } from '@/components/GlassCard';
+import { GLASS_GRADIENT } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+
+// Обгортка екрану (в кожному файлі):
+<LinearGradient colors={GLASS_GRADIENT} style={StyleSheet.absoluteFill} />
+
+// Картка аніме:
+<GlassCard intensity={65} style={{ marginBottom: 12 }}>
+  {/* твій контент картки */}
+</GlassCard>
+
+// Дропдаун/модалка:
+<GlassCard intensity={80} style={{ position: 'absolute', zIndex: 999 }}>
+  {/* підказки автокомпліту */}
+</GlassCard>
+
+
+
+kotlin.Unit
+
+==== RestoredMessage #4 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #5 ====
+User: 
+так фікс 1
+
+kotlin.Unit
+
+==== RestoredMessage #6 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #7 ====
+User: 
+тепер усе остальне
+
+kotlin.Unit
+
+==== RestoredMessage #8 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #9 ====
+User: 
+NIGHT SHIFT AUTONOMOUS DIRECTIVE: The user is going to sleep. You are in full autonomous mode. You have a massive checklist to complete by morning. DO NOT break the app. Work methodically, file by file. Read existing files before rewriting them.
+
+    STEP 1: THE LIQUID GLASS UI (System-wide Redesign)
+
+        Create src/components/ui/GlassCard.tsx using expo-blur (intensity={70}, tint="dark", borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)').
+
+        Replace ALL standard <View> cards in discover.tsx, local.tsx, and [id].tsx with this <GlassCard>.
+
+        Fix the Z-Index in discover.tsx: The Autocomplete dropdown container MUST have zIndex: 9999 and elevation: 10. The Anime list container MUST have zIndex: -1.
+
+    STEP 2: FIX THE KODIK PARSER & BACKEND STRICT MODE
+
+        Backend (VDS): Ensure your Node.js /api/kodik/search route forwards req.query correctly to Kodik.
+
+        Frontend (online-catalog.ts): In the title fallback search, YOU MUST APPEND &strict=true&types=anime-serial,anime to the URL.
+
+        In mergeTranslations, DO NOT filter out "AniDub" or any other dub. Return ALL unique translation.title items from Kodik.
+
+    STEP 3: CO-WATCHING WEBSOCKETS (Backend + Frontend)
+
+        VDS Backend: Add socket.io to your Express server. Create events: join_room, leave_room, sync_state (syncs video time and play/pause state).
+
+        Frontend: Create a src/services/socket.ts client. In the Video Player (video-player-screen.tsx), activate the "Co-Watch" button. When clicked, it generates a Room ID, connects to the VDS WebSocket, and emits/listens to sync_state events to control the video playback (playAsync, pauseAsync, setPositionAsync).
+
+    STEP 4: EPISODE/SEASON DOWNLOAD LOGIC
+
+        Kodik streams use m3u8/iframe, which is hard to download.
+
+        Build a module in the VDS Backend (/api/download/extract) that takes a Kodik player link, uses a headless browser (like Puppeteer) or extraction script to find the raw .m3u8 or .mp4 file.
+
+        Frontend: Add "Download Episode" and "Download Season" buttons in [id].tsx. When clicked, fetch the raw link from the VDS, then use expo-file-system to download it to the device and save the path in SQLite videos table.
+
+    EXECUTION: You are authorized to create new files, install necessary npm packages (socket.io-client, etc.), and modify the VDS backend. Do not stop until ALL 4 STEPS are fully implemented.
+
+kotlin.Unit
+
+==== RestoredMessage #10 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #11 ====
+User: 
+ INFO   i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 
+ ERROR  Kodik request failed: [Error: Kodik timeout] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik timeout] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik blocked] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik blocked] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik timeout] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik Fetch Failed: [Error: Kodik сейчас отвечает слишком долго.] 
+
+Code: online-catalog.ts
+  234 |
+  235 |       if (error instanceof Error && error.message.includes('Kodik timeout')) {
+> 236 |         throw new Error(i18n.t('online.providerTimeout'));
+      |                        ^
+  237 |       }
+  238 |
+  239 |       if (error instanceof Error && error.message.includes('Network request failed')) {
+Call Stack
+  requestKodikResults (src/services/online-catalog.ts:236:24)
+ ERROR  Kodik fallback failed: [Error: Kodik сейчас отвечает слишком долго.] 
+
+Code: online-catalog.ts
+  234 |
+  235 |       if (error instanceof Error && error.message.includes('Kodik timeout')) {
+> 236 |         throw new Error(i18n.t('online.providerTimeout'));
+      |                        ^
+  237 |       }
+  238 |
+  239 |       if (error instanceof Error && error.message.includes('Network request failed')) {
+Call Stack
+  requestKodikResults (src/services/online-catalog.ts:236:24)
+
+
+
+
+kotlin.Unit
+
+==== RestoredMessage #12 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #13 ====
+User: 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik timeout] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik blocked] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik blocked] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik request failed: [Error: Kodik timeout] 
+
+Code: safeFetch.ts
+  16 |           : `HTTP ${response.status}`;
+  17 |
+> 18 |       throw new Error(message);
+     |                      ^
+  19 |     }
+  20 |
+  21 |     return (await response.json()) as T;
+Call Stack
+  safeFetch (src/utils/safeFetch.ts:18:22)
+ ERROR  Kodik Fetch Failed: [Error: Kodik сейчас отвечает слишком долго.] 
+
+Code: online-catalog.ts
+  234 |
+  235 |       if (error instanceof Error && error.message.includes('Kodik timeout')) {
+> 236 |         throw new Error(i18n.t('online.providerTimeout'));
+      |                        ^
+  237 |       }
+  238 |
+  239 |       if (error instanceof Error && error.message.includes('Network request failed')) {
+Call Stack
+  requestKodikResults (src/services/online-catalog.ts:236:24)
+ ERROR  Kodik fallback failed: [Error: Kodik сейчас отвечает слишком долго.] 
+
+Code: online-catalog.ts
+  234 |
+  235 |       if (error instanceof Error && error.message.includes('Kodik timeout')) {
+> 236 |         throw new Error(i18n.t('online.providerTimeout'));
+      |                        ^
+  237 |       }
+  238 |
+  239 |       if (error instanceof Error && error.message.includes('Network request failed')) {
+Call Stack
+  requestKodikResults (src/services/online-catalog.ts:236:24)
+ ERROR  Kodik request failed: [AbortError: Aborted] 
+
+Code: fetch.umd.js
+  523 |       this.message = message;
+  524 |       this.name = name;
+> 525 |       var error = Error(message);
+      |                        ^
+  526 |       this.stack = error.stack;
+  527 |     };
+  528 |     exports.DOMException.prototype = Object.create(Error.prototype);
+Call Stack
+  exports.DOMException (node_modules/whatwg-fetch/dist/fetch.umd.js:525:24)
+  setTimeout$argument_0 (node_modules/whatwg-fetch/dist/fetch.umd.js:579:42)
+ ERROR  Kodik Fetch Failed: [Error: Kodik сейчас отвечает слишком долго.] 
+
+Code: online-catalog.ts
+  230 |
+  231 |       if (error instanceof Error && error.name === 'AbortError') {
+> 232 |         throw new Error(i18n.t('online.providerTimeout'));
+      |                        ^
+  233 |       }
+  234 |
+  235 |       if (error instanceof Error && error.message.includes('Kodik timeout')) {
+Call Stack
+  requestKodikResults (src/services/online-catalog.ts:232:24)
+ ERROR  Kodik fallback failed: [Error: Kodik сейчас отвечает слишком долго.] 
+
+Code: online-catalog.ts
+  230 |
+  231 |       if (error instanceof Error && error.name === 'AbortError') {
+> 232 |         throw new Error(i18n.t('online.providerTimeout'));
+      |                        ^
+  233 |       }
+  234 |
+  235 |       if (error instanceof Error && error.message.includes('Kodik timeout')) {
+Call Stack
+  requestKodikResults (src/services/online-catalog.ts:232:24)
+ ERROR  Video playback error: {"error": {"message": "Failed to load the player item: The operation couldn’t be completed. (CoreMediaErrorDomain error -12865.)"}, "status": "error", "uri": "file:///var/mobile/Containers/Data/Application/7FB9C650-C261-487F-8E6F-16EF086AA73D/Documents/ExponentExperienceData/@jonatanjostar/my-anime-player/downloads/1774490016069-.m3u8"} 
+
+Code: fullscreen-player.tsx
+  203 |     const subscription = player.addListener('statusChange', (event) => {
+  204 |       if (event.status === 'error' || event.error) {
+> 205 |         console.error('Video playback error:', {
+      |                      ^
+  206 |           uri: playableUri,
+  207 |           error: event.error,
+  208 |           status: event.status,
+Call Stack
+  player.addListener$argument_1 (src/components/player/fullscreen-player.tsx:205:22)
+ ERROR  Video playback error: {"error": {"message": "Failed to load the player item: The operation couldn’t be completed. (CoreMediaErrorDomain error -12865.)"}, "status": "loading", "uri": "file:///var/mobile/Containers/Data/Application/7FB9C650-C261-487F-8E6F-16EF086AA73D/Documents/ExponentExperienceData/@jonatanjostar/my-anime-player/downloads/1774490016069-.m3u8"} 
+
+Code: fullscreen-player.tsx
+  203 |     const subscription = player.addListener('statusChange', (event) => {
+  204 |       if (event.status === 'error' || event.error) {
+> 205 |         console.error('Video playback error:', {
+      |                      ^
+  206 |           uri: playableUri,
+  207 |           error: event.error,
+  208 |           status: event.status,
+Call Stack
+  player.addListener$argument_1 (src/components/player/fullscreen-player.tsx:205:22)
+
+
+
+
+kotlin.Unit
+
+==== RestoredMessage #14 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #15 ====
+User: 
+CRITICAL MICRO-TASK: DO NOT TOUCH THE VIDEO PLAYER, KODIK PARSER, OR ANY BACKEND LOGIC. Your ONLY task is to expand the existing Theme system with new Thematic Palettes.
+
+    1. Expand the Theme Store/Context:
+
+        Locate where the current themes (Light, Dark, OLED) are defined (likely in a constants/Colors.ts, ThemeProvider, or store).
+
+        Add the following new thematic palettes to the system:
+
+            "Liquid Glass": Deep dark blue/purple background (#0A0A1A) with heavy use of BlurView for cards, and borders rgba(255,255,255,0.2).
+
+            "Sakura": Soft pastel pink background (#FFE4E1), white cards, dark pink text/accents (#FF1493).
+
+            "Cyberpunk": Dark gray/black background (#121212), with high-contrast Neon Yellow (#FCE205) and Cyan (#00FFFF) accents for buttons and text.
+
+            "Evangelion": Deep purple background (#4B0082) with Neon Green accents (#39FF14).
+
+    2. Update the Settings UI:
+
+        Open the Settings screen where the user selects the theme.
+
+        Ensure ALL the new themes (Liquid Glass, Sakura, Cyberpunk, Evangelion) are available in the theme selector list/dropdown.
+
+        Ensure the UI correctly uses the t() function from react-i18next for these new theme names (update the en, ru, uk JSON files).
+
+    3. Enforce Theme Application:
+
+        Ensure that the main components (Tab Bar, Header, Main Backgrounds) dynamically consume these new background and accent colors from the active theme state.
+
+    Output: Show me the updated Theme definitions, the Settings screen update, and the localization keys. DO NOT rewrite anything else.
+
+kotlin.Unit
+
+==== RestoredMessage #16 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #17 ====
+User: 
+CRITICAL UI/UX FIX: The new themes work logically, but they look terrible visually. The contrast is broken, the "Liquid Glass" looks muddy, and the neon colors are burning the user's eyes. FIX THE AESTHETICS. DO NOT TOUCH LOGIC.
+
+    1. Fix the GlassCard (Make it Apple-level Premium):
+
+        Open src/components/ui/GlassCard.tsx.
+
+        The BlurView needs dynamic adaptation.
+
+        If the active theme is DARK (Evangelion, Cyberpunk, Dark, Liquid Glass, OLED): tint="dark", borderColor: 'rgba(255, 255, 255, 0.1)', backgroundColor: 'rgba(0, 0, 0, 0.2)'.
+
+        If the active theme is LIGHT (Sakura, Light): tint="light", borderColor: 'rgba(0, 0, 0, 0.05)', backgroundColor: 'rgba(255, 255, 255, 0.3)'.
+
+        Ensure every GlassCard has padding: 16 and borderRadius: 16 so content isn't squished.
+
+    2. Fix Text Contrast (Crucial):
+
+        Open src/theme/liquid.ts (or your theme definitions).
+
+        For EVERY dark theme (Cyberpunk, Evangelion, Liquid Glass, OLED), the primary text color MUST be pure #FFFFFF or #F0F0F0. The secondary text must be #A0A0A0.
+
+        For EVERY light theme (Sakura), the primary text MUST be #1A1A1A.
+
+    3. Mute the Backgrounds & Neons:
+
+        In liquid.ts, neon colors (#39FF14, #00FFFF, #FF1493) should ONLY be used for tint (active buttons, focused tabs, selected items).
+
+        The background colors must be very dark and muted.
+
+            Cyberpunk background: #0D0D12 (not pure black).
+
+            Evangelion background: #1A0B2E (very deep muted purple).
+
+            Sakura background: #FFF0F5 (very pale lavender blush).
+
+    Output: Update the color hex codes in the theme file and fix the GlassCard component. Do not change navigation or logic. Make it look clean, readable, and professional.
+
+kotlin.Unit
+
+==== RestoredMessage #18 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #19 ====
+User: 
+CRITICAL DATA OVERRIDE: Your parsing logic is STILL hiding dubs (like AniDub) because your Map keys are overwriting each other, and you failed to flatten the episodes. DO NOT THINK. DO NOT REWRITE. JUST COPY AND PASTE THIS EXACT CODE.
+
+1. Override mergeTranslations in src/services/online-catalog.ts:
+Find your mergeTranslations function and REPLACE IT COMPLETELY with this exact code:
+TypeScript
+
+function mergeTranslations(results: KodikSearchResult[]) {
+  const translations = new Map<string, KodikTranslation>();
+
+  for (const result of results) {
+    const translationTitle = normalizeText(result.translation?.title) || 'Original';
+    const translationType = normalizeText(result.translation?.type) || 'voice';
+    // USE RESULT ID TO PREVENT OVERWRITING DUBS!
+    const key = String(result.id || result.translation?.id || `${translationTitle}-${Math.random()}`); 
+    const playerLink = normalizeKodikLink(result.link);
+    const posterUrl = normalizeKodikLink(result.material_data?.anime_poster_url) ?? normalizeKodikLink(result.material_data?.poster_url);
+
+    // FLATTEN ALL EPISODES FROM ALL SEASONS
+    const flatEpisodes: KodikEpisode[] = [];
+    if (result.seasons) {
+      Object.values(result.seasons).forEach((seasonPayload: any) => {
+        if (seasonPayload?.episodes) {
+          Object.entries(seasonPayload.episodes).forEach(([epNum, epData]: [string, any]) => {
+            const numericNum = toPositiveNumber(epNum.replace(/\\D+/g, ''), 0) || 1;
+            flatEpisodes.push({
+              id: `${key}-ep-${numericNum}`,
+              number: numericNum,
+              title: epData?.title || `Episode ${numericNum}`,
+              link: normalizeKodikLink(epData?.link) ?? playerLink,
+              screenshot: epData?.screenshots?.[0] ?? null,
+            });
+          });
+        }
+      });
+    }
+
+    // Remove duplicates and sort episodes
+    const uniqueEpisodes = Array.from(new Map(flatEpisodes.map(item => [item.number, item])).values())
+      .sort((a, b) => a.number - b.number);
+
+    translations.set(key, {
+      id: key,
+      title: translationTitle,
+      type: translationType,
+      posterUrl,
+      playerLink,
+      seasons: [{ id: 'all-episodes', label: 'Всі серії', link: playerLink, episodes: uniqueEpisodes }]
+    });
+  }
+
+  // Return sorted translations (AniDub, StudioBand, etc. will all be here)
+  return Array.from(translations.values()).sort((a, b) => a.title.localeCompare(b.title));
+}
+
+2. Execution:
+Replace the function. Save the file. Do not touch the UI. Do not touch the backend.
+
+kotlin.Unit
+
+==== RestoredMessage #20 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #21 ====
+User: 
+CRITICAL FEATURE: REAL OFFLINE DOWNLOADING. The current download logic is FAKE (it just saves a string to SQLite without downloading the video). We need to implement actual file downloading using the VDS as an extractor.
+
+STEP 1: Backend Extractor (Node.js VDS)
+
+    Open your Express backend code (server.js).
+
+    Create a new POST route: /api/download/extract. It should accept { kodik_link: string }.
+
+    Implement logic to extract the direct .m3u8 or .mp4 URL from the Kodik iframe link. (Since Kodik obfuscates links, use a basic proxy or extraction script to fetch the raw media URL from the Kodik player page).
+
+    Return { direct_url: string } to the client.
+
+STEP 2: Real Frontend Downloader (expo-file-system)
+
+    Open the file where the "Download Episode" button is handled (e.g., [id].tsx or download-service.ts).
+
+    Replace the fake SQLite insert with REAL download logic:
+
+        Call the VDS /api/download/extract to get the direct_url.
+
+        Use FileSystem.createDownloadResumable(direct_url, FileSystem.documentDirectory + filename).
+
+        Add a progress callback to update the UI state (e.g., setDownloadProgress(progress)).
+
+        Await downloadResumable.downloadAsync().
+
+        ONLY AFTER the download finishes successfully, get the uri (which will be file://...) and INSERT THAT EXACT URI into the SQLite videos table.
+
+Output: Show me the updated backend route code and the updated frontend download function using expo-file-system. Do not touch anything else.
+
+kotlin.Unit
+
+==== RestoredMessage #22 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #23 ====
+User: 
+█  ▄  ▀▄▄▄ ▄█▄ ▄█▀▄▄▀▄▄▀▄▀▄█▄▀█
+█▄▄  ██▄▄▀ ▀ ▄█▀▄ █ █▄▀▀▄ ██▀██
+█▄ ▄▄ █▄█ ▄▀▄▀ ▄██ ▄▀▄▄▀▄▀▄ █▀█
+█  █ █▄▄▀▄▀▄█▀▄▄▄ █ ▀▀ ▄▀██▄▀██
+█▀██▄▀▀▄ ██▀█▄▄▄█▀▄▄ █ ▀█▀▀ █▀█
+█ █▄▀█▀▄▀▀ ▄ ▄▄  ██▄██▀ █▀▄▄▀██
+█▄██▄█▄▄▄ █▄▄▀▀█▄     ▄▄▄ ▀   █
+█ ▄▄▄▄▄ █▄▄▄█▀ ▄ █▄█▄ █▄█ ▄▄███
+█ █   █ █ ▀▀█▄█▄█ ▀██▄ ▄ ▄▄▄  █
+█ █▄▄▄█ █ █  ▄█▀  ▄█▀ ▀▄▀ ▄█ ██
+█▄▄▄▄▄▄▄█▄██▄███▄█▄███████▄▄███
+
+› Choose an app to open your project at http://192.168.188.156:8081/_expo/loading
+› Metro waiting on exp://192.168.188.156:8081
+› Scan the QR code above with Expo Go (Android) or the Camera app (iOS)
+
+› Web is waiting on http://localhost:8081
+
+› Using Expo Go
+› Press s │ switch to development build
+
+› Press a │ open Android
+› Press w │ open web
+
+› Press j │ open debugger
+› Press r │ reload app
+› Press m │ toggle menu
+› shift+m │ more tools
+› Press o │ open project code in your editor
+
+› Press ? │ show all commands
+
+iOS Bundled 13089ms node_modules/expo-router/entry.js (1718 modules)
+ INFO   i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: backend-api.ts
+  62 |       payloadError ||
+  63 |       `HTTP ${response.status}`;
+> 64 |     throw new Error(message);
+     |                    ^
+  65 |   }
+  66 |
+  67 |   return payload as T;
+Call Stack
+  apiRequest (src/services/backend-api.ts:64:20)
+
+
+
+kotlin.Unit
+
+==== RestoredMessage #24 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #25 ====
+User: 
+99! Blue $pider$ Always 74 Dance Underneath @ Round Yellow Moon #5 During Cold Winter Night$ Near 12 Deep Green Forest% With 88 Silent Wolves&
+
+kotlin.Unit
+
+==== RestoredMessage #26 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #27 ====
+User: 
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+ ERROR  Season download failed: [Error: HTTP 404] 
+
+Code: download-provider.tsx
+  70 |         ? payload.error
+  71 |         : `HTTP ${response.status}`;
+> 72 |     throw new Error(message);
+     |                    ^
+  73 |   }
+  74 |
+  75 |   const directUrl =
+Call Stack
+  requestDirectDownloadUrl (src/providers/download-provider.tsx:72:20)
+
+
+
+kotlin.Unit
+
+==== RestoredMessage #28 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #29 ====
+User: 
+CRITICAL DATA & PERFORMANCE FIX: The catalog is loading extremely slowly, and the Kodik parser is merging different franchise parts (e.g., JoJo Part 7 opens Part 1). FIX online-catalog.ts STRICTLY.
+
+    1. Fix Wrong Anime (Franchise Bug):
+
+        Open src/services/online-catalog.ts.
+
+        When fetching from Kodik using shikimori_id, Kodik sometimes returns related franchise seasons.
+
+        CRITICAL FIX: You MUST strictly filter the results array from Kodik. ONLY keep results where String(result.shikimori_id) === String(requested_shikimori_id). Drop the rest BEFORE merging. This ensures Steel Ball Run only shows Steel Ball Run.
+
+    2. Optimize Loading Speed (Stop N+1 Queries):
+
+        The catalog is taking forever to load.
+
+        Check fetchTrendingCatalog and searchCatalog. Are you making a separate Kodik fetch for EVERY single anime in the catalog list? STOP DOING THAT.
+
+        The Catalog screen should ONLY fetch data from Shikimori. DO NOT fetch Kodik translations until the user clicks on a specific anime and opens the [id].tsx Detail Screen.
+
+    3. Restore AniDub:
+
+        In mergeTranslations, ensure your key logic separates dubs perfectly. Do not overwrite translations.
+
+    Output: Fix online-catalog.ts. Make catalog loading instant by removing heavy Kodik fetches from the list view. Ensure strict shikimori_id filtering.
+
+kotlin.Unit
+
+==== RestoredMessage #30 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== RestoredMessage #31 ====
+User: 
+CRITICAL UI/UX OVERHAUL: The anime cards look terrible, deleting a download requires an app restart to visually disappear, and the "Co-watch" button is not translated. FIX THESE EXACT ISSUES.
+
+1. Premium Anime Cards (discover.tsx / GlassCard):
+
+    The anime list items look bad. Rewrite the render item for the catalog.
+
+    Use a classic 2:3 aspect ratio for the poster images (e.g., width: 120, height: 180).
+
+    Add a smooth LinearGradient overlay at the bottom of the poster so the white text is readable.
+
+    Round the corners (borderRadius: 12). Make them look like Netflix or Crunchyroll cards.
+
+2. Instant UI Deletion (Telegram Style):
+
+    Open local.tsx (or where downloads are shown).
+
+    When the user deletes a saved anime, you are deleting it from SQLite but NOT updating the React State.
+
+    Fix: Ensure you have a state const [downloads, setDownloads] = useState(...). Inside the delete function, immediately call setDownloads(prev => prev.filter(item => item.id !== deletedId)) so the item disappears instantly with a nice UI update.
+
+3. Co-Watch Translation:
+
+    Open video-player-screen.tsx.
+
+    Find the hardcoded "Co-watch" or "Совместный просмотр" button text.
+
+    Change it to use t('player.cowatch'). Add the translation keys to en, ru, and uk localization files.
+
+Output: Give me the beautiful card UI, fix the instant state update on delete, and translate the button. Do not add complex animations yet.
+
+kotlin.Unit
+
+==== RestoredMessage #32 ====
+Assistant: 
+
+
+kotlin.Unit
+
+==== UserMessageImpl #33 ====
+User: 
+ку пофіксь будь ласочка [Pasted text #1 +17 lines] а ще виправ завантаження та пошук піратьських озвучок по типу anidub  
+
+kotlin.Unit
+
+==== AgentMessage #34 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #35 ====
+User: 
+ такс я йду спати а ти маєш реалізувати норм перегляд в всіх популярних озвучках та норм скачку та норм спільний перегляд а ще треба щоб
+  усе було круто анімовано і бля окей спокойної ночі мені і кста перевір ще вкінці увесь код щоб я завтра уже міг випустити на глобальний
+  ринок цю прогу                                                                                                                            
+──────────────────────
+
+kotlin.Unit
+
+==== AgentMessage #36 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #37 ====
+User: 
+ LOG  [2026-04-07T03:02:05.261Z] [INFO] [Catalog] Fetching trending catalog 
+ ERROR  [2026-04-07T03:02:05.268Z] [ERROR] [Catalog] Failed to fetch trending catalog  
+
+Code: logger.ts
+  41 |     switch (level) {
+  42 |       case 'error':
+> 43 |         console.error(fullMessage, data || '', error?.stack || '');
+     |                      ^
+  44 |         break;
+  45 |       case 'warn':
+  46 |         console.warn(fullMessage, data || '');
+Call Stack
+  Logger#addLog (src/utils/logger.ts:43:22)
+  Logger#error (src/utils/logger.ts:66:16)
+  fetchTrendingCatalog (src/services/online-catalog.ts:635:17)
+iOS Bundled 55ms node_modules/expo-router/entry.js (1 module)
+ INFO  🌐 i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 💙
+ LOG  [2026-04-07T03:02:49.230Z] [INFO] [Catalog] Fetching trending catalog 
+ ERROR  [2026-04-07T03:02:49.240Z] [ERROR] [Catalog] Failed to fetch trending catalog  
+
+Code: logger.ts
+  41 |     switch (level) {
+  42 |       case 'error':
+> 43 |         console.error(fullMessage, data || '', error?.stack || '');
+     |                      ^
+  44 |         break;
+  45 |       case 'warn':
+  46 |         console.warn(fullMessage, data || '');
+Call Stack
+  Logger#addLog (src/utils/logger.ts:43:22)
+  Logger#error (src/utils/logger.ts:66:16)
+  fetchTrendingCatalog (src/services/online-catalog.ts:635:17)
+ LOG  [2026-04-07T03:02:57.701Z] [INFO] [Settings] Dark mode toggle changed {"current": true, "value": false}
+ LOG  [2026-04-07T03:02:57.744Z] [INFO] [Settings] Dark mode setting saved {"value": false}
+ LOG  [2026-04-07T03:02:59.468Z] [INFO] [Settings] Dark mode toggle changed {"current": false, "value": true}
+ LOG  [2026-04-07T03:02:59.530Z] [INFO] [Settings] Dark mode setting saved {"value": true}
+ LOG  [2026-04-07T03:03:00.022Z] [INFO] [Settings] Dark mode toggle changed {"current": true, "value": false}
+ LOG  [2026-04-07T03:03:00.077Z] [INFO] [Settings] Dark mode setting saved {"value": false}
+ LOG  [2026-04-07T03:03:02.460Z] [INFO] [Settings] Auto-delete toggle changed {"current": false, "value": true}
+ LOG  [2026-04-07T03:03:02.520Z] [INFO] [Settings] Auto-delete setting saved {"value": true}
+ LOG  [2026-04-07T03:03:02.927Z] [INFO] [Settings] Auto-delete toggle changed {"current": true, "value": false}
+ LOG  [2026-04-07T03:03:02.978Z] [INFO] [Settings] Auto-delete setting saved {"value": false}
+
+такс після совместного просмотра все ще крашить нажатія лише на кнопку далі ніхуя не грузить а ще жидке скло має бути як в ios26
+
+kotlin.Unit
+
+==== AgentMessage #38 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #39 ====
+User: 
+анука створи папку білдс та забілдь під усе можливе пж
+
+kotlin.Unit
+
+==== AgentMessage #40 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #41 ====
+User: 
+такс на андроїді 1 не можна ні ввійти ні зарегатися нетворк реквест фалед а ще як гость також зайти не можна а ще https://217.60.245.84/settings тут старе а треба нове
+
+kotlin.Unit
+
+==== AgentMessage #42 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #43 ====
+User: 
+такс 1 ти закинув увесь сайт на бекенд а 2 ти обновив апк?
+
+kotlin.Unit
+
+==== AgentMessage #44 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #45 ====
+User: 
+1 закинь пж ось ip та юз root@217.60.245.84 та ось пароль 99! Blue $pider$ Always 74 Dance Underneath @ Round Yellow Moon #5 During Cold Winter Night$ Near 12 Deep Green Forest% With 88 Silent Wolves& 
+
+kotlin.Unit
+
+==== AgentMessage #46 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #47 ====
+User: 
+1 закинь пж ось ip та юз root@217.60.245.84 та ось пароль 99! Blue $pider$ Always 74 Dance Underneath @ Round Yellow Moon #5 During Cold Winter Night$ Near 12 Deep Green Forest% With 88 Silent Wolves&  2 забілдь пж та якщо так буде швидше то забілдь на вдс но в основному похуй жду .apk та норм варік для .ipa там через гіт хаб буду робити
+
+kotlin.Unit
+
+==== AgentMessage #48 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #49 ====
+User: 
+дакс Atherium Love, [07.04.26 10:34]
+     Сука как же это уёбично выглядит на андроид
+     
+     Atherium Love, [07.04.26 10:34]
+     На ios это выглядит в разы луче
+     
+     I Smail, [07.04.26 10:35]
+     гэпэтэ дизайн
+     
+     I Smail, [07.04.26 10:35]
+     и еще с jojo
+     
+     I Smail, [07.04.26 10:35]
+     (и это только на авторизации)
+     
+     Atherium Love, [07.04.26 10:35]
+     да
+     
+     Atherium Love, [07.04.26 10:35]
+     всм?
+     
+     Atherium Love, [07.04.26 10:35]
+     дальше хуже
+     
+     Atherium Love, [07.04.26 10:36]
+     по дизайну
+     
+     I Smail, [07.04.26 10:36]
+     как же ты спастил загрузки
+     
+     Atherium Love, [07.04.26 10:36]
+     всм?
+     
+     I Smail, [07.04.26 10:36]
+     а не у меня система хотябы лучше
+     
+     I Smail, [07.04.26 10:36]
+     для скачивания
+     
+     Atherium Love, [07.04.26 10:36]
+     у тя аниме смотреть можна ?
+     
+     Atherium Love, [07.04.26 10:36]
+     у меня токо с впн
+     
+     I Smail, [07.04.26 10:37]
+     там нету видео далі сайт не працює а в прогі 1 уйобічний дизайн а 2 не показує ні серій ні озвучок ніхуя а анімації такі криві нахуй що не знаю щей так усе випирає нахуй зроби нормально будь ласочка 
+
+kotlin.Unit
+
+==== AgentMessage #50 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
+==== UserMessageImpl #51 ====
+User: 
+такс аніме список грузить но епізоди ні ще треба добавити при регістрації вік та якщо юзер ставить 18+ то відкривається жанр хентай 
+
+kotlin.Unit
+
+==== AgentMessage #52 ====
+Assistant: 
+
+
+Tool use list:
+
+
+kotlin.Unit
+
