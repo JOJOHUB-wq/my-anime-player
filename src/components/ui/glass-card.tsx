@@ -24,8 +24,8 @@ export function GlassCard({
       style={[
         styles.card,
         {
-          backgroundColor: isLight ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)',
-          borderColor: isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.1)',
+          backgroundColor: isLight ? 'rgba(255, 255, 255, 0.65)' : 'rgba(12, 12, 15, 0.55)',
+          borderColor: isLight ? 'rgba(0, 0, 0, 0.1)' : 'rgba(255, 255, 255, 0.08)',
         },
         style,
       ]}>

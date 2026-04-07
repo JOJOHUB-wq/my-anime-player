@@ -220,12 +220,16 @@ function mapStreamResolutionToTranslations(
 }
 
 function normalizeTranslationKey(translation: Pick<KodikTranslation, 'id' | 'title'>) {
+  // Use translation.id as primary key to prevent dubs with identical names (or empty titles resolving to 'Original') from overwriting each other
+  if (translation.id) {
+    return String(translation.id);
+  }
   const normalizedTitle = normalizeLabel(translation.title, '')
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
 
-  return normalizedTitle || translation.id;
+  return normalizedTitle || String(Math.random());
 }
 
 function normalizeSeasonKey(season: Pick<KodikSeason, 'id' | 'label'>) {

@@ -7,6 +7,7 @@ const MEDIA_BACKEND_BASE_URL =
   (Platform.OS === 'web'
     ? 'https://217-60-245-84.sslip.io/api/media'
     : 'http://217.60.245.84:3000/api');
+
 const KODIK_REQUEST_TIMEOUT_MS = 35000;
 
 type ShikimoriCatalogResponseItem = {
@@ -275,42 +276,72 @@ function mergeTranslations(results: KodikSearchResult[]) {
     const playerLink = normalizeKodikLink(result.link);
     const posterUrl = normalizeKodikLink(result.material_data?.anime_poster_url) ?? normalizeKodikLink(result.material_data?.poster_url);
 
-    // FLATTEN ALL EPISODES FROM ALL SEASONS
-    const flatEpisodes: KodikEpisode[] = [];
+    const mappedSeasons: KodikSeason[] = [];
+
     if (result.seasons) {
-      Object.values(result.seasons).forEach((seasonPayload: any) => {
+      Object.entries(result.seasons).forEach(([seasonKey, seasonPayload]: [string, any]) => {
+        const seasonNum = toPositiveNumber(seasonKey.replace(/\D+/g, ''), 1);
+        const seasonLabel = typeof seasonPayload === 'string' ? '' : normalizeText(seasonPayload?.title);
+        const seasonLink = typeof seasonPayload === 'string' ? normalizeKodikLink(seasonPayload) : normalizeKodikLink(seasonPayload?.link) ?? playerLink;
+
+        const eps: KodikEpisode[] = [];
         if (seasonPayload?.episodes) {
           Object.entries(seasonPayload.episodes).forEach(([epNum, epData]: [string, any]) => {
             const numericNum = toPositiveNumber(epNum.replace(/\D+/g, ''), 0) || 1;
-            flatEpisodes.push({
-              id: `${key}-ep-${numericNum}`,
+            eps.push({
+              id: `${key}-s${seasonNum}-ep-${numericNum}`,
               number: numericNum,
-              title: epData?.title || `Episode ${numericNum}`,
-              link: normalizeKodikLink(epData?.link) ?? playerLink,
+              title: epData?.title || buildEpisodeTitle(numericNum),
+              link: normalizeKodikLink(epData?.link) ?? seasonLink,
               screenshot: epData?.screenshots?.[0] ?? null,
             });
           });
         }
+
+        // Remove duplicate episodes within the season
+        const uniqueEps = Array.from(new Map(eps.map(item => [item.number, item])).values())
+          .sort((a, b) => a.number - b.number);
+
+        mappedSeasons.push({
+          id: `season-${seasonNum}`,
+          label: seasonLabel || `${i18n.t('online.seasonLabel')} ${seasonNum}`,
+          link: seasonLink,
+          episodes: uniqueEps,
+        });
       });
     } else if (result.episodes || result.episodes_data) {
        const episodesPayload = result.episodes || result.episodes_data;
+       const eps: KodikEpisode[] = [];
        if (episodesPayload) {
           Object.entries(episodesPayload).forEach(([epNum, epData]: [string, any]) => {
             const numericNum = toPositiveNumber(epNum.replace(/\D+/g, ''), 0) || 1;
-            flatEpisodes.push({
+            eps.push({
               id: `${key}-ep-${numericNum}`,
               number: numericNum,
-              title: epData?.title || `Episode ${numericNum}`,
+              title: epData?.title || buildEpisodeTitle(numericNum),
               link: typeof epData === 'string' ? normalizeKodikLink(epData) : normalizeKodikLink(epData?.link) ?? playerLink,
               screenshot: epData?.screenshots?.[0] ?? null,
             });
           });
        }
+
+       const uniqueEps = Array.from(new Map(eps.map(item => [item.number, item])).values())
+          .sort((a, b) => a.number - b.number);
+
+       mappedSeasons.push({
+         id: `season-1`,
+         label: `${i18n.t('online.seasonLabel')} 1`,
+         link: playerLink,
+         episodes: uniqueEps,
+       });
     }
 
-    // Remove duplicates and sort episodes
-    const uniqueEpisodes = Array.from(new Map(flatEpisodes.map(item => [item.number, item])).values())
-      .sort((a, b) => a.number - b.number);
+    // Sort seasons by ID number (season-1, season-2)
+    mappedSeasons.sort((left, right) => {
+      const leftValue = toPositiveNumber(left.id.replace(/\D+/g, ''), 0);
+      const rightValue = toPositiveNumber(right.id.replace(/\D+/g, ''), 0);
+      return leftValue - rightValue;
+    });
 
     translations.set(key, {
       id: key,
@@ -318,7 +349,7 @@ function mergeTranslations(results: KodikSearchResult[]) {
       type: translationType,
       posterUrl,
       playerLink,
-      seasons: [{ id: 'all-episodes', label: 'Всі серії', link: playerLink, episodes: uniqueEpisodes }]
+      seasons: mappedSeasons,
     });
   }
 
