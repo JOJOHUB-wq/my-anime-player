@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next';
 
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
+import { useAuth } from '@/src/providers/auth-provider';
 import { fetchTrendingCatalog, searchCatalog, type CatalogAnime } from '@/src/services/online-catalog';
 
 const GLASS_INTENSITY = 70;
@@ -91,6 +92,12 @@ function CatalogCard({
 export default function DiscoverTabScreen() {
   const { theme } = useApp();
   const { t } = useTranslation();
+  const { user } = useAuth();
+
+  const allowHentai = useMemo(() => {
+    return typeof user?.age === 'number' && user.age >= 18;
+  }, [user?.age]);
+
   const [items, setItems] = useState<CatalogAnime[]>([]);
   const [query, setQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
@@ -113,8 +120,8 @@ export default function DiscoverTabScreen() {
 
       try {
         const nextItems = trimmedQuery
-          ? await searchCatalog(trimmedQuery)
-          : await fetchTrendingCatalog();
+          ? await searchCatalog(trimmedQuery, allowHentai)
+          : await fetchTrendingCatalog(allowHentai);
         setItems(nextItems);
         setActiveQuery(trimmedQuery);
       } catch {
@@ -125,7 +132,7 @@ export default function DiscoverTabScreen() {
         setRefreshing(false);
       }
     },
-    [activeQuery, t]
+    [activeQuery, allowHentai, t]
   );
 
   useEffect(() => {
@@ -147,7 +154,7 @@ export default function DiscoverTabScreen() {
         setSuggestionsLoading(true);
 
         try {
-          const results = await searchCatalog(trimmed);
+          const results = await searchCatalog(trimmed, allowHentai);
           if (active) {
             setSuggestions(results.slice(0, 6));
           }
@@ -167,7 +174,7 @@ export default function DiscoverTabScreen() {
       active = false;
       clearTimeout(timeoutId);
     };
-  }, [query]);
+  }, [query, allowHentai]);
 
   const renderItem = ({ item, index }: ListRenderItemInfo<CatalogAnime>) => (
     <CatalogCard
@@ -533,7 +540,7 @@ const styles = StyleSheet.create({
   },
   poster: {
     width: '100%',
-    aspectRatio: 0.72,
+    aspectRatio: 0.666, /* 2:3 ratio */
   },
   posterFallback: {
     alignItems: 'center',
@@ -555,18 +562,29 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   cardBody: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 6,
+    paddingTop: 40,
+    paddingBottom: 14,
+    gap: 4,
   },
   cardTitle: {
     fontSize: 15,
     fontWeight: '800',
     lineHeight: 20,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   cardMeta: {
     fontSize: 12,
     fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   emptyCard: {
     marginTop: 40,

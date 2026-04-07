@@ -74,12 +74,14 @@ async function initializeDatabase() {
       is_guest INTEGER NOT NULL DEFAULT 0,
       avatar_seed TEXT,
       last_seen_at DATETIME,
+      age INTEGER,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   await ensureColumn('users', 'avatar_seed', 'TEXT');
   await ensureColumn('users', 'last_seen_at', 'DATETIME');
+  await ensureColumn('users', 'age', 'INTEGER');
 
   await run(`
     CREATE TABLE IF NOT EXISTS friendships (

@@ -7,7 +7,7 @@ import { useApp } from '@/src/providers/app-provider';
 export function GlassCard({
   children,
   style,
-  intensity = 72,
+  intensity = 80,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -15,16 +15,17 @@ export function GlassCard({
 }) {
   const { theme } = useApp();
 
+  const isLight = theme.id === 'sakura';
+
   return (
     <BlurView
       intensity={intensity}
-      tint="dark"
+      tint={isLight ? 'light' : 'dark'}
       style={[
         styles.card,
         {
-          backgroundColor: theme.cardBackground,
-          borderColor: 'rgba(255, 255, 255, 0.15)',
-          shadowColor: '#FFFFFF',
+          backgroundColor: isLight ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)',
+          borderColor: isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.1)',
         },
         style,
       ]}>
@@ -35,15 +36,17 @@ export function GlassCard({
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 24,
+    borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
+    padding: 16,
+    shadowColor: '#FFFFFF',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
     shadowOffset: {
       width: 0,
-      height: 6,
+      height: 4,
     },
-    elevation: 0,
+    elevation: 6,
   },
 });

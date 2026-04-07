@@ -18,6 +18,7 @@ import Animated, {
 import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
+import { router } from 'expo-router';
 
 import { useApp } from '@/src/providers/app-provider';
 
@@ -534,7 +535,25 @@ function FullscreenPlayerContent({
               ) : null}
             </View>
 
-            <Pressable style={styles.hostButton}>
+            <Pressable
+              style={styles.hostButton}
+              onPress={() => {
+                void handleClose();
+                setTimeout(() => {
+                  const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+                  router.push({
+                    pathname: '/room/[roomId]',
+                    params: {
+                      roomId,
+                      mediaUri: media.uri,
+                      mediaTitle: title,
+                      mediaSubtitle: subtitle,
+                      mediaHeaders: media.headers ? JSON.stringify(media.headers) : undefined,
+                    },
+                  });
+                }, 100);
+              }}
+            >
               <MaterialIcons name="groups" size={20} color={theme.textPrimary} />
               <Text style={[styles.hostButtonLabel, { color: theme.textPrimary }]}>{t('player.hostRoom')}</Text>
             </Pressable>

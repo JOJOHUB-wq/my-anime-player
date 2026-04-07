@@ -144,7 +144,6 @@ function PlaylistCard({
   onOpenMenu: () => void;
 }) {
   const { t } = useTranslation();
-  const { theme } = useApp();
 
   return (
     <Animated.View
@@ -195,28 +194,21 @@ function PlaylistCard({
               </Pressable>
             </View>
 
-            <View style={styles.posterMetaRow}>
-              <View style={styles.countPill}>
-                <Ionicons name="play-outline" size={12} color={PRIMARY_TEXT} />
-                <Text style={styles.countPillLabel}>{t('local.videosCount', { count: item.videoCount })}</Text>
+            <View style={styles.playlistBody}>
+              <View style={styles.posterMetaRow}>
+                <View style={styles.countPill}>
+                  <Ionicons name="play-outline" size={12} color={PRIMARY_TEXT} />
+                  <Text style={styles.countPillLabel}>{t('local.videosCount', { count: item.videoCount })}</Text>
+                </View>
               </View>
-            </View>
-          </View>
 
-          <View style={styles.playlistBody}>
-            <Text style={styles.playlistTitle} numberOfLines={2}>
-              {item.name}
-            </Text>
-            <Text style={styles.playlistMeta} numberOfLines={2}>
-              {item.videoCount > 0 ? t('local.choosePlaylistSubtitle') : t('local.emptyCopy')}
-            </Text>
+              <Text style={styles.playlistTitle} numberOfLines={2}>
+                {item.name}
+              </Text>
 
-            <View style={styles.playlistFooter}>
-              <View style={styles.playlistFooterToken}>
-                <Ionicons name={resolvePlaylistIcon(item.icon)} size={13} color={theme.accentPrimary} />
-              </View>
-              <Text style={styles.playlistFooterLabel}>{t('common.playlist')}</Text>
-              <Ionicons name="chevron-forward" size={16} color={SECONDARY_TEXT} />
+              <Text style={styles.playlistMeta} numberOfLines={1}>
+                {item.videoCount > 0 ? t('local.choosePlaylistSubtitle') : t('local.emptyCopy')}
+              </Text>
             </View>
           </View>
         </BlurView>
@@ -1290,11 +1282,11 @@ const styles = StyleSheet.create({
   },
   playlistArtwork: {
     position: 'relative',
-    height: 168,
+    width: '100%',
   },
   playlistThumbnail: {
     width: '100%',
-    height: '100%',
+    aspectRatio: 0.666,
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1338,12 +1330,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.12)',
   },
   posterMetaRow: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    bottom: 10,
     flexDirection: 'row',
     justifyContent: 'flex-start',
+    marginBottom: 6,
   },
   countPill: {
     flexDirection: 'row',
@@ -1362,27 +1351,31 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   playlistBody: {
-    padding: 14,
-    minHeight: 118,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 14,
+    paddingTop: 40,
+    paddingBottom: 14,
+    gap: 4,
   },
   playlistTitle: {
     color: PRIMARY_TEXT,
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '800',
-    lineHeight: 22,
+    lineHeight: 20,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   playlistMeta: {
-    marginTop: 8,
     color: SECONDARY_TEXT,
     fontSize: 13,
     lineHeight: 18,
-    minHeight: 36,
   },
   playlistFooter: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    display: 'none',
   },
   playlistFooterToken: {
     width: 26,
