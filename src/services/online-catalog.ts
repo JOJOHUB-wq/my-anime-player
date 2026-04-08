@@ -6,7 +6,7 @@ const MEDIA_BACKEND_BASE_URL =
   process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL ||
   (Platform.OS === 'web'
     ? 'https://217-60-245-84.sslip.io/api/media'
-    : 'http://217.60.245.84:3000/api');
+    : 'https://217-60-245-84.sslip.io/api/media');
 
 const KODIK_REQUEST_TIMEOUT_MS = 35000;
 

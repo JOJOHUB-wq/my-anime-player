@@ -86,13 +86,36 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
 
     await FileSystem.makeDirectoryAsync(DOWNLOAD_DIRECTORY, { intermediates: true });
 
-    const safeFilename = sanitizeSegment(request.filename);
+    // Ensure we are getting the actual media URL from the Kodik/iframe proxy, instead of downloading an iframe HTML response.
+    const extractUrl = process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL
+      ? `${process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL.replace(/\/+$/, '')}/extract`
+      : 'https://217-60-245-84.sslip.io/api/media/extract';
+
+    let directUrl = request.remoteUrl;
+    try {
+       const res = await fetch(extractUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: request.remoteUrl }),
+       });
+       if (res.ok) {
+          const json = await res.json();
+          if (json?.url) {
+             directUrl = json.url;
+          }
+       }
+    } catch {
+       // Proceed with the raw URL if extraction fails
+    }
+
+    const isHls = directUrl.includes('.m3u8');
+    const safeFilename = sanitizeSegment(request.filename).replace(/\.[^.]+$/, isHls ? '.m3u8' : '.mp4');
     const targetUri = `${DOWNLOAD_DIRECTORY}${Date.now()}-${safeFilename}`;
 
     await updateVideoDownloadState(db, video.id, {
       downloadStatus: 'queued',
       downloadProgress: 0,
-      remoteUrl: request.remoteUrl,
+      remoteUrl: directUrl,
     });
 
     setActiveDownloads((current) => ({
@@ -105,7 +128,7 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
     }));
 
     const resumable = FileSystem.createDownloadResumable(
-      request.remoteUrl,
+      directUrl,
       targetUri,
       {
         headers: request.headers,
