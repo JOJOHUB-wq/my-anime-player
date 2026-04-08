@@ -22,6 +22,7 @@ function buildAuthResponse(user, expiresIn) {
       role: user.role,
       rank: user.rank,
       avatar_seed: user.avatar_seed,
+      age: user.age,
       created_at: user.created_at,
       is_guest: Boolean(user.is_guest),
     },
@@ -37,6 +38,7 @@ function buildAuthResponse(user, expiresIn) {
       role: user.role,
       rank: user.rank,
       avatar_seed: user.avatar_seed,
+      age: user.age,
       created_at: user.created_at,
       is_guest: Boolean(user.is_guest),
     },
@@ -56,6 +58,7 @@ async function register(req, res) {
     const username = String(req.body.username || '').trim();
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '');
+    const age = parseInt(req.body.age, 10);
 
     if (!username || !email || !password) {
       res.status(400).json({
@@ -90,17 +93,19 @@ async function register(req, res) {
 
     const passwordHash = await bcrypt.hash(password, PASSWORD_SALT_ROUNDS);
     const avatarSeed = `${username}-${Date.now()}`;
+    const parsedAge = isNaN(age) ? null : age;
+
     const result = await run(
       `
-        INSERT INTO users (username, email, password_hash, role, rank, is_guest, avatar_seed, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO users (username, email, password_hash, role, rank, is_guest, avatar_seed, age, last_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       `,
-      [username, email, passwordHash, assignedRole, assignedRank, 0, avatarSeed]
+      [username, email, passwordHash, assignedRole, assignedRank, 0, avatarSeed, parsedAge]
     );
 
     const createdUser = await get(
       `
-        SELECT id, username, email, role, rank, is_guest, avatar_seed, created_at
+        SELECT id, username, email, role, rank, is_guest, avatar_seed, age, created_at
         FROM users
         WHERE id = ?
       `,
@@ -131,7 +136,7 @@ async function login(req, res) {
 
     const user = await get(
       `
-        SELECT id, username, email, password_hash, role, rank, is_guest, avatar_seed, created_at
+        SELECT id, username, email, password_hash, role, rank, is_guest, avatar_seed, age, created_at
         FROM users
         WHERE email = ? OR username = ?
         LIMIT 1

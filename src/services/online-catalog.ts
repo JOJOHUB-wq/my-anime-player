@@ -6,7 +6,8 @@ const MEDIA_BACKEND_BASE_URL =
   process.env.EXPO_PUBLIC_MEDIA_BACKEND_URL ||
   (Platform.OS === 'web'
     ? 'https://217-60-245-84.sslip.io/api/media'
-    : 'http://217.60.245.84:3000/api');
+    : 'https://217-60-245-84.sslip.io/api/media');
+
 const KODIK_REQUEST_TIMEOUT_MS = 35000;
 
 type ShikimoriCatalogResponseItem = {
@@ -128,15 +129,6 @@ function normalizeText(value?: string | null) {
   return String(value ?? '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\[[^[\]]+]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function normalizeComparisonText(value?: string | null) {
-  return normalizeText(value)
-    .toLowerCase()
-    .replace(/ё/g, 'е')
-    .replace(/[^a-z0-9а-яіїєґ]+/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -273,256 +265,93 @@ function mapCatalogAnime(item: ShikimoriCatalogResponseItem): CatalogAnime {
   };
 }
 
-function buildSeasonLabel(seasonNumber: number) {
-  return `${i18n.t('online.seasonLabel')} ${seasonNumber}`;
-}
-
 function buildEpisodeTitle(episodeNumber: number) {
   return i18n.t('online.episodeLabel', { value: episodeNumber });
-}
-
-function buildFallbackEpisodes(count: number, link: string | null) {
-  return Array.from({ length: Math.max(count, 1) }, (_, index) => ({
-    id: `episode-${index + 1}`,
-    number: index + 1,
-    title: buildEpisodeTitle(index + 1),
-    link,
-    screenshot: null,
-  }));
-}
-
-function parseSeasonNumber(value: unknown, fallback = 1) {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (!normalized || normalized === 'undefined' || normalized === 'null') {
-    return fallback;
-  }
-
-  const numeric = normalized.match(/\d+/);
-  return toPositiveNumber(numeric?.[0], fallback);
-}
-
-function getRootEpisodesPayload(result: KodikSearchResult) {
-  const candidates = [result.episodes, result.episodes_data];
-  for (const candidate of candidates) {
-    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-      return candidate;
-    }
-  }
-
-  return undefined;
-}
-
-function parseSeasonEpisodes(
-  seasonPayload: KodikSeasonPayload | string | null | undefined,
-  seasonLabel: string,
-  fallbackLink: string | null,
-  fallbackCount: number,
-  fallbackEpisodesData?: Record<string, KodikEpisodePayload | string | null | undefined>
-) {
-  if (typeof seasonPayload === 'string') {
-    return buildFallbackEpisodes(fallbackCount, normalizeKodikLink(seasonPayload));
-  }
-
-  const seasonLink = normalizeKodikLink(seasonPayload?.link) ?? fallbackLink;
-  const episodesData = seasonPayload?.episodes ?? fallbackEpisodesData;
-
-  if (!episodesData || typeof episodesData !== 'object') {
-    return buildFallbackEpisodes(fallbackCount, seasonLink);
-  }
-
-  const episodes = Object.entries(episodesData)
-    .map(([episodeKey, episodePayload]) => {
-      const episodeNumber = toPositiveNumber(String(episodeKey).replace(/\D+/g, ''), 0);
-
-      if (typeof episodePayload === 'string') {
-        return {
-          id: `${seasonLabel}-${episodeNumber || episodeKey}`,
-          number: episodeNumber || 1,
-          title: buildEpisodeTitle(episodeNumber || 1),
-          link: normalizeKodikLink(episodePayload) ?? seasonLink,
-          screenshot: null,
-        };
-      }
-
-      const payload = episodePayload ?? {};
-      const link = normalizeKodikLink(payload.link) ?? seasonLink;
-      const title = normalizeText(payload.title) || buildEpisodeTitle(episodeNumber || 1);
-      const screenshot = payload.screenshots?.[0] ?? null;
-
-      return {
-        id: `${seasonLabel}-${episodeNumber || episodeKey}`,
-        number: episodeNumber || 1,
-        title,
-        link,
-        screenshot,
-      };
-    })
-    .sort((left, right) => left.number - right.number);
-
-  return episodes.length > 0 ? episodes : buildFallbackEpisodes(fallbackCount, seasonLink);
-}
-
-function parseSeasons(result: KodikSearchResult): KodikSeason[] {
-  const fallbackLink = normalizeKodikLink(result.link);
-  const fallbackCount = toPositiveNumber(result.episodes_count, 1);
-  const seasonsPayload = result.seasons;
-  const fallbackSeasonNumber = parseSeasonNumber(result.last_season, 1);
-  const rootEpisodesData = getRootEpisodesPayload(result);
-
-  if (!seasonsPayload || typeof seasonsPayload !== 'object' || Array.isArray(seasonsPayload)) {
-    const fallbackLabel = buildSeasonLabel(fallbackSeasonNumber);
-
-    return [
-      {
-        id: `season-${fallbackSeasonNumber}`,
-        label: fallbackLabel,
-        link: fallbackLink,
-        episodes: parseSeasonEpisodes(
-          {
-            link: fallbackLink ?? undefined,
-            episodes: rootEpisodesData,
-          },
-          fallbackLabel,
-          fallbackLink,
-          fallbackCount,
-          rootEpisodesData
-        ),
-      },
-    ];
-  }
-
-  const seasons = Object.entries(seasonsPayload)
-    .map(([seasonKey, seasonPayload], index) => {
-      const numericSeason = parseSeasonNumber(seasonKey, index + 1);
-      const label =
-        (typeof seasonPayload === 'string' ? '' : normalizeText(seasonPayload?.title)) || buildSeasonLabel(numericSeason);
-      const seasonLink =
-        typeof seasonPayload === 'string'
-          ? normalizeKodikLink(seasonPayload)
-          : normalizeKodikLink(seasonPayload?.link) ?? fallbackLink;
-
-      return {
-        id: `season-${numericSeason}`,
-        label,
-        link: seasonLink,
-        episodes: parseSeasonEpisodes(seasonPayload, label, seasonLink, fallbackCount),
-      };
-    })
-    .sort((left, right) => {
-      const leftValue = toPositiveNumber(left.id.replace(/\D+/g, ''), 0);
-      const rightValue = toPositiveNumber(right.id.replace(/\D+/g, ''), 0);
-      return leftValue - rightValue;
-    });
-
-  return seasons.length > 0
-    ? seasons
-    : [
-        {
-          id: `season-${fallbackSeasonNumber}`,
-          label: buildSeasonLabel(fallbackSeasonNumber),
-          link: fallbackLink,
-          episodes: buildFallbackEpisodes(fallbackCount, fallbackLink),
-        },
-      ];
 }
 
 function mergeTranslations(results: KodikSearchResult[]) {
   const translations = new Map<string, KodikTranslation>();
 
   for (const result of results) {
-    if (result.translation?.id == null) {
-      continue;
-    }
-
-    const translationTitle = normalizeText(result.translation?.title) || i18n.t('online.dubs.original');
+    const translationTitle = normalizeText(result.translation?.title) || 'Original';
     const translationType = normalizeText(result.translation?.type) || 'voice';
-    const playerLink = normalizeKodikLink(result.link);
-    const seasons = parseSeasons(result);
-    const posterUrl =
-      normalizeKodikLink(result.material_data?.anime_poster_url) ??
-      normalizeKodikLink(result.material_data?.poster_url);
+
+    // STRICT FIX: Ensure we deduplicate only by translation.id, meaning AniDub isn't overwritten by AniLibria!
+    if (!result.translation?.id) continue;
     const key = String(result.translation.id);
 
-    const existing = translations.get(key);
+    const playerLink = normalizeKodikLink(result.link);
+    const posterUrl = normalizeKodikLink(result.material_data?.anime_poster_url) ?? normalizeKodikLink(result.material_data?.poster_url);
 
-    if (!existing) {
-      translations.set(key, {
-        id: key,
-        title: translationTitle,
-        type: translationType,
-        posterUrl,
-        playerLink: playerLink ?? seasons[0]?.link ?? null,
-        seasons,
-      });
-      continue;
-    }
-
-    const mergedSeasons = new Map(existing.seasons.map((season) => [season.id, season]));
-
-    for (const season of seasons) {
-      const current = mergedSeasons.get(season.id);
-      if (!current) {
-        mergedSeasons.set(season.id, season);
-        continue;
-      }
-
-      const mergedEpisodes = new Map(current.episodes.map((episode) => [episode.number, episode]));
-      for (const episode of season.episodes) {
-        const currentEpisode = mergedEpisodes.get(episode.number);
-        if (!currentEpisode) {
-          mergedEpisodes.set(episode.number, episode);
-          continue;
+    // EXACT FLATTEN LOGIC FROM CHAT.TXT RESTORED TO GUARANTEE ALL EPISODES
+    const flatEpisodes: KodikEpisode[] = [];
+    if (result.seasons) {
+      Object.values(result.seasons).forEach((seasonPayload: any) => {
+        if (seasonPayload?.episodes) {
+          Object.entries(seasonPayload.episodes).forEach(([epNum, epData]: [string, any]) => {
+            const numericNum = toPositiveNumber(epNum.replace(/\D+/g, ''), 0) || 1;
+            flatEpisodes.push({
+              id: `${key}-ep-${numericNum}`,
+              number: numericNum,
+              title: epData?.title || buildEpisodeTitle(numericNum),
+              link: typeof epData === 'string' ? normalizeKodikLink(epData) : normalizeKodikLink(epData?.link) ?? playerLink,
+              screenshot: epData?.screenshots?.[0] ?? null,
+            });
+          });
         }
-
-        mergedEpisodes.set(episode.number, {
-          ...currentEpisode,
-          title: currentEpisode.title || episode.title,
-          link: currentEpisode.link ?? episode.link,
-          screenshot: currentEpisode.screenshot ?? episode.screenshot,
-        });
-      }
-
-      mergedSeasons.set(season.id, {
-        ...current,
-        link: current.link ?? season.link,
-        episodes: [...mergedEpisodes.values()].sort((left, right) => left.number - right.number),
       });
+    } else if (result.episodes || result.episodes_data) {
+       const episodesPayload = result.episodes || result.episodes_data;
+       if (episodesPayload) {
+          Object.entries(episodesPayload).forEach(([epNum, epData]: [string, any]) => {
+            const numericNum = toPositiveNumber(epNum.replace(/\D+/g, ''), 0) || 1;
+            flatEpisodes.push({
+              id: `${key}-ep-${numericNum}`,
+              number: numericNum,
+              title: epData?.title || buildEpisodeTitle(numericNum),
+              link: typeof epData === 'string' ? normalizeKodikLink(epData) : normalizeKodikLink(epData?.link) ?? playerLink,
+              screenshot: epData?.screenshots?.[0] ?? null,
+            });
+          });
+       }
     }
 
+    const uniqueEpisodes = Array.from(new Map(flatEpisodes.map(item => [item.number, item])).values())
+      .sort((a, b) => a.number - b.number);
+
+    // To prevent duplicate keys overwriting episodes, we create the entry directly:
     translations.set(key, {
-      ...existing,
-      posterUrl: existing.posterUrl ?? posterUrl,
-      playerLink: existing.playerLink ?? playerLink ?? seasons[0]?.link ?? null,
-      seasons: [...mergedSeasons.values()].sort((left, right) => {
-        const leftValue = toPositiveNumber(left.id.replace(/\D+/g, ''), 0);
-        const rightValue = toPositiveNumber(right.id.replace(/\D+/g, ''), 0);
-        return leftValue - rightValue;
-      }),
+      id: key,
+      title: translationTitle,
+      type: translationType,
+      posterUrl,
+      playerLink,
+      seasons: [{ id: 'all-episodes', label: 'Всі серії', link: playerLink, episodes: uniqueEpisodes }]
     });
   }
 
-  return [...translations.values()].sort((left, right) => {
-    return left.title.localeCompare(right.title, undefined, { sensitivity: 'base' });
-  });
+  return Array.from(translations.values()).sort((a, b) => a.title.localeCompare(b.title));
 }
 
-export async function fetchTrendingCatalog() {
+export async function fetchTrendingCatalog(allowHentai: boolean = false) {
+  const ratingFilter = allowHentai ? '' : '&rating=g,pg,pg_13,r,r_plus';
   const payload = await requestJson<ShikimoriCatalogResponseItem[]>(
-    `${SHIKIMORI_BASE_URL}/api/animes?limit=30&order=ranked`
+    `${SHIKIMORI_BASE_URL}/api/animes?limit=30&order=ranked${ratingFilter}`
   );
 
   return Array.isArray(payload) ? payload.map(mapCatalogAnime) : [];
 }
 
-export async function searchCatalog(query: string) {
+export async function searchCatalog(query: string, allowHentai: boolean = false) {
   const trimmed = query.trim();
 
   if (!trimmed) {
-    return fetchTrendingCatalog();
+    return fetchTrendingCatalog(allowHentai);
   }
 
+  const ratingFilter = allowHentai ? '' : '&rating=g,pg,pg_13,r,r_plus';
   const payload = await requestJson<ShikimoriCatalogResponseItem[]>(
-    `${SHIKIMORI_BASE_URL}/api/animes?search=${encodeURIComponent(trimmed)}&limit=20`
+    `${SHIKIMORI_BASE_URL}/api/animes?search=${encodeURIComponent(trimmed)}&limit=20${ratingFilter}`
   );
 
   return Array.isArray(payload) ? payload.map(mapCatalogAnime) : [];
@@ -559,11 +388,12 @@ export async function fetchKodikTranslations(shikimoriId: number, fallbackTitle?
     let lastError: unknown = null;
 
     try {
-      results.push(
-        ...(await requestKodikResults({
-          shikimori_id: String(shikimoriId),
-        }))
-      );
+      const fetched = await requestKodikResults({
+        shikimori_id: String(shikimoriId),
+      });
+      // Strict filtering by shikimori_id to prevent franchise bleed (e.g. jojo parts)
+      const strictFiltered = fetched.filter((res: any) => String(res.shikimori_id) === String(shikimoriId));
+      results.push(...strictFiltered);
     } catch (error) {
       lastError = error;
     }

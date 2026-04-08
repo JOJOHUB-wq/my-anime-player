@@ -56,7 +56,8 @@ type RoomMessage = {
   roomId: string;
   userId: string | null;
   username: string;
-  text: string;
+  text?: string;
+  audioUrl?: string;
   isGuest: boolean;
   createdAt: string;
 };
@@ -347,7 +348,7 @@ export default function RoomScreen() {
           <Text style={[styles.messageAuthor, { color: mine ? '#05070F' : theme.textPrimary }]}>
             {item.username}
           </Text>
-          <Text style={[styles.messageText, { color: mine ? '#05070F' : theme.textPrimary }]}>{item.text}</Text>
+          <Text style={[styles.messageText, { color: mine ? '#05070F' : theme.textPrimary }]}>{item.text || 'Голосове повідомлення наразі не підтримується на цьому пристрої'}</Text>
           <Text style={[styles.messageTime, { color: mine ? 'rgba(5,7,15,0.7)' : theme.textMuted }]}>
             {formatTime(item.createdAt)}
           </Text>
@@ -660,4 +661,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  audioButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  audioButtonLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+  }
 });

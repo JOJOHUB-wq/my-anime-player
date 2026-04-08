@@ -37,7 +37,6 @@
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
     "expo-symbols": "~1.0.8",
-    
     "expo-video": "~3.0.15",
     "expo-web-browser": "~15.0.10",
     "i18next": "^25.10.5",

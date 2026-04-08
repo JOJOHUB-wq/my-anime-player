@@ -429,6 +429,7 @@ async function handleYouTubeExtract(req, res) {
 
 app.post('/api/youtube/extract', handleYouTubeExtract);
 app.post('/api/media/youtube/extract', handleYouTubeExtract);
+app.post('/api/media/extract', handleYouTubeExtract);
 
 io.on('connection', (socket) => {
   socket.on('join_room', (roomId) => {

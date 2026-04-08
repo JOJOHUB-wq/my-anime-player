@@ -112,7 +112,7 @@ function mapRoomInviteRow(row, direction) {
 async function getAuthenticatedUserRow(userId) {
   return get(
     `
-      SELECT id, username, email, role, rank, is_guest, avatar_seed, created_at, last_seen_at
+      SELECT id, username, email, role, rank, is_guest, avatar_seed, age, created_at, last_seen_at
       FROM users
       WHERE id = ?
       LIMIT 1
@@ -1091,6 +1091,7 @@ async function getCurrentUserProfile(req, res) {
         role: user.role,
         rank: user.rank,
         avatar_seed: user.avatar_seed,
+        age: user.age,
         created_at: user.created_at,
         is_guest: Boolean(user.is_guest),
         stats: {
@@ -1142,6 +1143,7 @@ async function getPublicUserProfile(req, res) {
         role: user.role,
         rank: user.rank,
         avatar_seed: user.avatar_seed,
+        age: user.age,
         created_at: user.created_at,
         is_guest: Boolean(user.is_guest),
         status: mapFriendStatus(user.last_seen_at, user.id),

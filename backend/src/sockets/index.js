@@ -76,7 +76,7 @@ function initializeSocketServer(io) {
 
       const messages = await all(
         `
-          SELECT id, room_id, user_id, username, body, is_guest, created_at
+          SELECT id, room_id, user_id, username, body, audio_url, is_guest, created_at
           FROM room_messages
           WHERE room_id = ?
           ORDER BY datetime(created_at) DESC, id DESC
@@ -94,7 +94,8 @@ function initializeSocketServer(io) {
           roomId: row.room_id,
           userId: row.user_id ? String(row.user_id) : null,
           username: row.username,
-          text: row.body,
+          text: row.body || '',
+          audioUrl: row.audio_url || null,
           isGuest: Boolean(row.is_guest),
           createdAt: row.created_at,
         })),
@@ -254,7 +255,7 @@ function initializeSocketServer(io) {
       });
     });
 
-    socket.on('room_message', async ({ roomId, text }, ack = () => {}) => {
+    socket.on('room_message', async ({ roomId, text, audioUrl }, ack = () => {}) => {
       if (!roomId || typeof roomId !== 'string') {
         ack({
           ok: false,
@@ -272,24 +273,26 @@ function initializeSocketServer(io) {
       }
 
       const body = String(text || '').trim();
-      if (!body) {
+      const resolvedAudio = typeof audioUrl === 'string' ? audioUrl : null;
+      if (!body && !resolvedAudio) {
         ack({
           ok: false,
-          error: 'Message text is required.',
+          error: 'Message text or audio is required.',
         });
         return;
       }
 
       const result = await run(
         `
-          INSERT INTO room_messages (room_id, user_id, username, body, is_guest, created_at)
-          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          INSERT INTO room_messages (room_id, user_id, username, body, audio_url, is_guest, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `,
         [
           roomId,
           socket.data.user?.id || null,
           socket.data.user?.username || 'Guest',
           body,
+          resolvedAudio,
           socket.data.user?.is_guest ? 1 : 0,
         ]
       ).catch(() => null);
@@ -308,6 +311,7 @@ function initializeSocketServer(io) {
         userId: socket.data.user?.id ? String(socket.data.user.id) : null,
         username: socket.data.user?.username || 'Guest',
         text: body,
+        audioUrl: resolvedAudio,
         isGuest: Boolean(socket.data.user?.is_guest),
         createdAt: new Date().toISOString(),
       };

@@ -29,6 +29,7 @@ export default function AuthEntryScreen() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [age, setAge] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,7 +51,7 @@ export default function AuthEntryScreen() {
 
     try {
       if (mode === 'register') {
-        await startRegister({ username, email, password });
+        await startRegister({ username, email, password, age });
       } else {
         await startLogin({ email, password });
       }
@@ -107,14 +108,24 @@ export default function AuthEntryScreen() {
             </View>
 
             {mode === 'register' ? (
-              <TextInput
-                value={username}
-                onChangeText={setUsername}
-                placeholder={t('auth.username', { defaultValue: 'Username' })}
-                placeholderTextColor={theme.textMuted}
-                style={[styles.input, { color: theme.textPrimary, borderColor: theme.cardBorder, backgroundColor: theme.inputBackground }]}
-                autoCapitalize="words"
-              />
+              <>
+                <TextInput
+                  value={username}
+                  onChangeText={setUsername}
+                  placeholder={t('auth.username', { defaultValue: 'Username' })}
+                  placeholderTextColor={theme.textMuted}
+                  style={[styles.input, { color: theme.textPrimary, borderColor: theme.cardBorder, backgroundColor: theme.inputBackground }]}
+                  autoCapitalize="words"
+                />
+                <TextInput
+                  value={age}
+                  onChangeText={setAge}
+                  placeholder={t('auth.age', { defaultValue: 'Age' })}
+                  placeholderTextColor={theme.textMuted}
+                  style={[styles.input, { color: theme.textPrimary, borderColor: theme.cardBorder, backgroundColor: theme.inputBackground }]}
+                  keyboardType="numeric"
+                />
+              </>
             ) : null}
 
             <TextInput
