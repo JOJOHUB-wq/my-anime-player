@@ -21,9 +21,6 @@ import {
   type PlayableMedia,
 } from '@/src/components/player/fullscreen-player';
 import { GlassCard } from '@/src/components/ui/glass-card';
-import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
-
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
 import { useAuth } from '@/src/providers/auth-provider';
@@ -119,10 +116,6 @@ export default function RoomScreen() {
   const [messages, setMessages] = useState<RoomMessage[]>([]);
   const [chatVisible, setChatVisible] = useState(false);
   const [messageDraft, setMessageDraft] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
 
   const playableMedia = useMemo<PlayableMedia | null>(() => {
     if (!roomState?.media?.uri) {
@@ -323,86 +316,22 @@ export default function RoomScreen() {
     );
   }
 
-  async function sendRoomMessage(overrideText?: string, audioBase64?: string) {
+  async function sendRoomMessage() {
     const socket = socketRef.current;
-    const text = overrideText ?? messageDraft.trim();
+    const text = messageDraft.trim();
 
-    if (!socket || !roomId || (!text && !audioBase64)) {
+    if (!socket || !roomId || !text) {
       return;
     }
 
-    socket.emit('room_message', { roomId, text, audioUrl: audioBase64 }, (ack: { ok?: boolean; error?: string }) => {
+    socket.emit('room_message', { roomId, text }, (ack: { ok?: boolean; error?: string }) => {
       if (!ack?.ok) {
         setError(ack?.error || 'Unable to send room message.');
         return;
       }
-      if (!overrideText && !audioBase64) {
-        setMessageDraft('');
-      }
+      setMessageDraft('');
     });
   }
-
-  async function toggleRecording() {
-    try {
-      if (isRecording && recording) {
-        setIsRecording(false);
-        await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
-        if (uri) {
-           const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-           void sendRoomMessage('', `data:audio/m4a;base64,${base64}`);
-        }
-        setRecording(null);
-      } else {
-        await Audio.requestPermissionsAsync();
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording: newRecording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-        setRecording(newRecording);
-        setIsRecording(true);
-      }
-    } catch (e) {
-      console.error('Recording error', e);
-      setIsRecording(false);
-    }
-  }
-
-  async function playAudioMessage(audioUrl: string, msgId: string) {
-    if (playingAudioId === msgId && soundRef.current) {
-      await soundRef.current.stopAsync();
-      setPlayingAudioId(null);
-      return;
-    }
-
-    try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-      }
-
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-      const { sound } = await Audio.Sound.createAsync({ uri: audioUrl });
-      soundRef.current = sound;
-      setPlayingAudioId(msgId);
-
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-           setPlayingAudioId(null);
-        }
-      });
-
-      await sound.playAsync();
-    } catch (e) {
-      console.error('Audio playback error', e);
-      setPlayingAudioId(null);
-    }
-  }
-
-  useEffect(() => {
-     return () => {
-        if (soundRef.current) {
-           soundRef.current.unloadAsync();
-        }
-     };
-  }, []);
 
   const renderMessage = ({ item }: ListRenderItemInfo<RoomMessage>) => {
     const mine = item.userId && user?.id && item.userId === user.id;
@@ -419,15 +348,7 @@ export default function RoomScreen() {
           <Text style={[styles.messageAuthor, { color: mine ? '#05070F' : theme.textPrimary }]}>
             {item.username}
           </Text>
-          {item.text ? (
-             <Text style={[styles.messageText, { color: mine ? '#05070F' : theme.textPrimary }]}>{item.text}</Text>
-          ) : null}
-          {item.audioUrl ? (
-             <Pressable onPress={() => playAudioMessage(item.audioUrl!, item.id)} style={[styles.audioButton, { borderColor: mine ? 'rgba(0,0,0,0.2)' : theme.cardBorder }]}>
-               <Ionicons name={playingAudioId === item.id ? "stop-circle" : "play-circle"} size={24} color={mine ? '#05070F' : theme.textPrimary} />
-               <Text style={[styles.audioButtonLabel, { color: mine ? '#05070F' : theme.textPrimary }]}>Голосове повідомлення</Text>
-             </Pressable>
-          ) : null}
+          <Text style={[styles.messageText, { color: mine ? '#05070F' : theme.textPrimary }]}>{item.text || 'Голосове повідомлення наразі не підтримується на цьому пристрої'}</Text>
           <Text style={[styles.messageTime, { color: mine ? 'rgba(5,7,15,0.7)' : theme.textMuted }]}>
             {formatTime(item.createdAt)}
           </Text>
@@ -593,9 +514,6 @@ export default function RoomScreen() {
                   }}
                   returnKeyType="send"
                 />
-                <Pressable onPress={toggleRecording} style={[styles.sendButton, { backgroundColor: isRecording ? theme.danger : theme.surfaceMuted, marginRight: 8 }]}>
-                  <Ionicons name="mic" size={18} color={isRecording ? '#05070F' : theme.textPrimary} />
-                </Pressable>
                 <Pressable onPress={() => { void sendRoomMessage(); }} style={[styles.sendButton, { backgroundColor: theme.accentPrimary }]}>
                   <Ionicons name="send" size={18} color="#05070F" />
                 </Pressable>
