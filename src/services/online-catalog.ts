@@ -265,6 +265,10 @@ function mapCatalogAnime(item: ShikimoriCatalogResponseItem): CatalogAnime {
   };
 }
 
+function buildEpisodeTitle(episodeNumber: number) {
+  return i18n.t('online.episodeLabel', { value: episodeNumber });
+}
+
 function mergeTranslations(results: KodikSearchResult[]) {
   const translations = new Map<string, KodikTranslation>();
 

@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import i18n from '@/src/i18n';
 import { useApp } from '@/src/providers/app-provider';
-import { useDownloadContext } from '@/src/providers/download-provider';
+import { useDownloads } from '@/src/providers/download-provider';
 import {
   fetchAnimeDetail,
   fetchKodikTranslations,
@@ -441,7 +441,7 @@ export default function OnlineAnimeDetailScreen() {
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const downloadContext = useDownloadContext();
+  const downloadContext = useDownloads();
 
   const loadAnime = useCallback(async () => {
     if (!animeId) {
