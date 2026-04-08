@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import i18n from '@/src/i18n';
 import { useApp } from '@/src/providers/app-provider';
+import { useDownloadContext } from '@/src/providers/download-provider';
 import {
   fetchAnimeDetail,
   fetchKodikTranslations,
@@ -377,20 +378,36 @@ function EpisodeTile({
   item,
   index,
   onPress,
+  onDownload,
+  downloadStatus,
+  downloadProgress
 }: {
   item: KodikEpisode;
   index: number;
   onPress: () => void;
+  onDownload: () => void;
+  downloadStatus?: string;
+  downloadProgress?: number;
 }) {
   const { theme } = useApp();
   const { t } = useTranslation();
+
+  const renderDownloadIcon = () => {
+     if (downloadStatus === 'downloading') {
+        return <ActivityIndicator size="small" color={theme.accentSecondary} />;
+     }
+     if (downloadStatus === 'downloaded') {
+        return <Ionicons name="checkmark-done" size={16} color={theme.success} />;
+     }
+     return <Ionicons name="download-outline" size={16} color={theme.textSecondary} />;
+  };
 
   return (
     <Animated.View
       entering={FadeInDown.delay(index * 20).springify()}
       layout={LinearTransition.springify().damping(18).stiffness(180)}
       style={styles.episodeTileWrap}>
-      <Pressable onPress={onPress}>
+      <Pressable onPress={onPress} style={{ flex: 1 }}>
         <GlassPanel style={styles.episodeTile}>
           <View style={[styles.episodeNumberBadge, { backgroundColor: theme.surfaceStrong }]}>
             <Text style={[styles.episodeNumberText, { color: theme.textPrimary }]}>{item.number}</Text>
@@ -400,7 +417,12 @@ function EpisodeTile({
             {item.title || t('online.episodeLabel', { value: item.number })}
           </Text>
 
-          <Ionicons name="play" size={16} color={theme.accentPrimary} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingHorizontal: 4 }}>
+            <Ionicons name="play" size={16} color={theme.accentPrimary} />
+            <Pressable onPress={(e) => { e.stopPropagation(); onDownload(); }} hitSlop={10}>
+              {renderDownloadIcon()}
+            </Pressable>
+          </View>
         </GlassPanel>
       </Pressable>
     </Animated.View>
@@ -419,6 +441,7 @@ export default function OnlineAnimeDetailScreen() {
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const downloadContext = useDownloadContext();
 
   const loadAnime = useCallback(async () => {
     if (!animeId) {
@@ -521,27 +544,46 @@ export default function OnlineAnimeDetailScreen() {
   const episodeColumns = width >= 1400 ? 7 : width >= 1180 ? 6 : width >= 900 ? 5 : width >= 680 ? 4 : 3;
   const wideLayout = width >= 1040;
 
-  const renderEpisode = ({ item, index }: ListRenderItemInfo<KodikEpisode>) => (
-    <EpisodeTile
-      item={item}
-      index={index}
-      onPress={() => {
-        const resolvedLink = item.link ?? activeSeason?.link ?? activeTranslation?.playerLink;
-        if (!resolvedLink || !detail) {
-          return;
-        }
+  const renderEpisode = ({ item, index }: ListRenderItemInfo<KodikEpisode>) => {
+    const resolvedLink = item.link ?? activeSeason?.link ?? activeTranslation?.playerLink;
+    const downloadKey = `anime-${animeId}-s${selectedSeasonId}-ep${item.number}-${selectedDubId}`;
+    const dlState = downloadContext?.getDownloadState(downloadKey);
 
-        router.push({
-          pathname: '/player/webview',
-          params: {
-            url: resolvedLink,
-            title: detail.title,
-            subtitle: `${activeTranslation?.title || t('online.dubs.original')} • ${activeSeason?.label || t('online.seasonsTitle')} • ${t('online.episodeLabel', { value: item.number })}`,
-          },
-        });
-      }}
-    />
-  );
+    return (
+      <EpisodeTile
+        item={item}
+        index={index}
+        downloadStatus={dlState?.status}
+        downloadProgress={dlState?.progress}
+        onDownload={() => {
+          if (!resolvedLink || !detail || !downloadContext) return;
+          void downloadContext.downloadEpisode({
+            externalId: downloadKey,
+            remoteUrl: resolvedLink,
+            seriesTitle: detail.title || detail.originalTitle,
+            filename: `ep-${item.number}-${detail.title.replace(/[^a-zA-Z0-9]/g, '')}.m3u8`,
+            episodeNumber: item.number,
+            thumbnailUri: item.screenshot || detail.posterUrl,
+            playlistIcon: 'film-outline',
+          });
+        }}
+        onPress={() => {
+          if (!resolvedLink || !detail) {
+            return;
+          }
+
+          router.push({
+            pathname: '/player/webview',
+            params: {
+              url: resolvedLink,
+              title: detail.title,
+              subtitle: `${activeTranslation?.title || t('online.dubs.original')} • ${activeSeason?.label || t('online.seasonsTitle')} • ${t('online.episodeLabel', { value: item.number })}`,
+            },
+          });
+        }}
+      />
+    );
+  };
 
   if (loading) {
     return (
@@ -681,12 +723,38 @@ export default function OnlineAnimeDetailScreen() {
 
             <GlassPanel style={styles.sectionCard}>
               <View style={styles.sectionHeaderRow}>
-                <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.episodesTitle')}</Text>
-                <View style={[styles.counterBadge, { backgroundColor: theme.surfaceStrong }]}>
-                  <Text style={[styles.counterBadgeLabel, { color: theme.textPrimary }]}>
-                    {activeSeason?.episodes.length ?? 0}
-                  </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>{t('online.episodesTitle')}</Text>
+                  <View style={[styles.counterBadge, { backgroundColor: theme.surfaceStrong }]}>
+                    <Text style={[styles.counterBadgeLabel, { color: theme.textPrimary }]}>
+                      {activeSeason?.episodes.length ?? 0}
+                    </Text>
+                  </View>
                 </View>
+
+                <Pressable
+                  style={[styles.downloadSeasonBtn, { backgroundColor: theme.accentPrimary }]}
+                  onPress={() => {
+                    if (!activeSeason || !detail || !downloadContext) return;
+                    for (const ep of activeSeason.episodes) {
+                      const resolvedLink = ep.link ?? activeSeason.link ?? activeTranslation?.playerLink;
+                      const downloadKey = `anime-${animeId}-s${selectedSeasonId}-ep${ep.number}-${selectedDubId}`;
+                      if (!resolvedLink) continue;
+                      void downloadContext.downloadEpisode({
+                        externalId: downloadKey,
+                        remoteUrl: resolvedLink,
+                        seriesTitle: detail.title || detail.originalTitle,
+                        filename: `ep-${ep.number}-${detail.title.replace(/[^a-zA-Z0-9]/g, '')}.m3u8`,
+                        episodeNumber: ep.number,
+                        thumbnailUri: ep.screenshot || detail.posterUrl,
+                        playlistIcon: 'film-outline',
+                      });
+                    }
+                  }}
+                >
+                  <Ionicons name="download" size={16} color="#05070F" />
+                  <Text style={[styles.downloadSeasonBtnLabel, { color: '#05070F' }]}>Скачати сезон</Text>
+                </Pressable>
               </View>
             </GlassPanel>
           </View>
@@ -857,6 +925,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   counterBadgeLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  downloadSeasonBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  downloadSeasonBtnLabel: {
     fontSize: 12,
     fontWeight: '800',
   },

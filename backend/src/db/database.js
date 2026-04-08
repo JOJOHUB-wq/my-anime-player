@@ -165,12 +165,15 @@ async function initializeDatabase() {
       room_id TEXT NOT NULL,
       user_id INTEGER,
       username TEXT NOT NULL,
-      body TEXT NOT NULL,
+      body TEXT,
+      audio_url TEXT,
       is_guest INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
     )
   `);
+
+  await ensureColumn('room_messages', 'audio_url', 'TEXT');
 
   await run(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);

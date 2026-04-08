@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { useTranslation } from 'react-i18next';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import { LiquidBackground } from '@/src/components/ui/liquid-background';
 import { useApp } from '@/src/providers/app-provider';
@@ -69,19 +70,26 @@ function CatalogCard({
               </View>
             )}
 
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.85)']}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+
             <View style={[styles.scoreBadge, { backgroundColor: theme.surfaceStrong }]}>
               <Ionicons name="star" size={12} color={theme.accentPrimary} />
               <Text style={[styles.scoreBadgeLabel, { color: theme.textPrimary }]}>{item.score}</Text>
             </View>
-          </View>
 
-          <View style={styles.cardBody}>
-            <Text style={[styles.cardTitle, { color: theme.textPrimary }]} numberOfLines={2}>
-              {item.title}
-            </Text>
-            <Text style={[styles.cardMeta, { color: theme.textSecondary }]} numberOfLines={1}>
-              {t('discover.episodesCount', { count: item.episodesAired || item.episodes || 0 })}
-            </Text>
+            <View style={styles.cardBody}>
+              <Text style={[styles.cardTitle, { color: '#FFFFFF' }]} numberOfLines={2}>
+                {item.title}
+              </Text>
+              <Text style={[styles.cardMeta, { color: 'rgba(255,255,255,0.8)' }]} numberOfLines={1}>
+                {t('discover.episodesCount', { count: item.episodesAired || item.episodes || 0 })}
+              </Text>
+            </View>
           </View>
         </GlassPanel>
       </Pressable>

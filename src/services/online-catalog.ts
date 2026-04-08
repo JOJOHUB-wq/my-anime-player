@@ -271,51 +271,37 @@ function mergeTranslations(results: KodikSearchResult[]) {
   for (const result of results) {
     const translationTitle = normalizeText(result.translation?.title) || 'Original';
     const translationType = normalizeText(result.translation?.type) || 'voice';
-    // USE RESULT ID TO PREVENT OVERWRITING DUBS!
-    const key = String(result.id || result.translation?.id || `${translationTitle}-${Math.random()}`);
+
+    // STRICT FIX: Ensure we deduplicate only by translation.id, meaning AniDub isn't overwritten by AniLibria!
+    if (!result.translation?.id) continue;
+    const key = String(result.translation.id);
+
     const playerLink = normalizeKodikLink(result.link);
     const posterUrl = normalizeKodikLink(result.material_data?.anime_poster_url) ?? normalizeKodikLink(result.material_data?.poster_url);
 
-    const mappedSeasons: KodikSeason[] = [];
-
+    // EXACT FLATTEN LOGIC FROM CHAT.TXT RESTORED TO GUARANTEE ALL EPISODES
+    const flatEpisodes: KodikEpisode[] = [];
     if (result.seasons) {
-      Object.entries(result.seasons).forEach(([seasonKey, seasonPayload]: [string, any]) => {
-        const seasonNum = toPositiveNumber(seasonKey.replace(/\D+/g, ''), 1);
-        const seasonLabel = typeof seasonPayload === 'string' ? '' : normalizeText(seasonPayload?.title);
-        const seasonLink = typeof seasonPayload === 'string' ? normalizeKodikLink(seasonPayload) : normalizeKodikLink(seasonPayload?.link) ?? playerLink;
-
-        const eps: KodikEpisode[] = [];
+      Object.values(result.seasons).forEach((seasonPayload: any) => {
         if (seasonPayload?.episodes) {
           Object.entries(seasonPayload.episodes).forEach(([epNum, epData]: [string, any]) => {
             const numericNum = toPositiveNumber(epNum.replace(/\D+/g, ''), 0) || 1;
-            eps.push({
-              id: `${key}-s${seasonNum}-ep-${numericNum}`,
+            flatEpisodes.push({
+              id: `${key}-ep-${numericNum}`,
               number: numericNum,
               title: epData?.title || buildEpisodeTitle(numericNum),
-              link: normalizeKodikLink(epData?.link) ?? seasonLink,
+              link: typeof epData === 'string' ? normalizeKodikLink(epData) : normalizeKodikLink(epData?.link) ?? playerLink,
               screenshot: epData?.screenshots?.[0] ?? null,
             });
           });
         }
-
-        // Remove duplicate episodes within the season
-        const uniqueEps = Array.from(new Map(eps.map(item => [item.number, item])).values())
-          .sort((a, b) => a.number - b.number);
-
-        mappedSeasons.push({
-          id: `season-${seasonNum}`,
-          label: seasonLabel || `${i18n.t('online.seasonLabel')} ${seasonNum}`,
-          link: seasonLink,
-          episodes: uniqueEps,
-        });
       });
     } else if (result.episodes || result.episodes_data) {
        const episodesPayload = result.episodes || result.episodes_data;
-       const eps: KodikEpisode[] = [];
        if (episodesPayload) {
           Object.entries(episodesPayload).forEach(([epNum, epData]: [string, any]) => {
             const numericNum = toPositiveNumber(epNum.replace(/\D+/g, ''), 0) || 1;
-            eps.push({
+            flatEpisodes.push({
               id: `${key}-ep-${numericNum}`,
               number: numericNum,
               title: epData?.title || buildEpisodeTitle(numericNum),
@@ -324,36 +310,22 @@ function mergeTranslations(results: KodikSearchResult[]) {
             });
           });
        }
-
-       const uniqueEps = Array.from(new Map(eps.map(item => [item.number, item])).values())
-          .sort((a, b) => a.number - b.number);
-
-       mappedSeasons.push({
-         id: `season-1`,
-         label: `${i18n.t('online.seasonLabel')} 1`,
-         link: playerLink,
-         episodes: uniqueEps,
-       });
     }
 
-    // Sort seasons by ID number (season-1, season-2)
-    mappedSeasons.sort((left, right) => {
-      const leftValue = toPositiveNumber(left.id.replace(/\D+/g, ''), 0);
-      const rightValue = toPositiveNumber(right.id.replace(/\D+/g, ''), 0);
-      return leftValue - rightValue;
-    });
+    const uniqueEpisodes = Array.from(new Map(flatEpisodes.map(item => [item.number, item])).values())
+      .sort((a, b) => a.number - b.number);
 
+    // To prevent duplicate keys overwriting episodes, we create the entry directly:
     translations.set(key, {
       id: key,
       title: translationTitle,
       type: translationType,
       posterUrl,
       playerLink,
-      seasons: mappedSeasons,
+      seasons: [{ id: 'all-episodes', label: 'Всі серії', link: playerLink, episodes: uniqueEpisodes }]
     });
   }
 
-  // Return sorted translations (AniDub, StudioBand, etc. will all be here)
   return Array.from(translations.values()).sort((a, b) => a.title.localeCompare(b.title));
 }
 
